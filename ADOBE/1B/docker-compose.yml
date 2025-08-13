@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  challenge1b:
+    build: .
+    volumes:
+      # Mount input files
+      - ./Train:/app/Train
+      # Mount output directory
+      - ./test_output:/app/test_output
+      # Mount any additional input files
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./PDFs:/app/PDFs
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - CUDA_VISIBLE_DEVICES=""
+      - PYTHONHASHSEED=42
+      - CUBLAS_WORKSPACE_CONFIG=:4096:8
+    command: python main.py
+    # Remove container after execution
+    restart: "no" 

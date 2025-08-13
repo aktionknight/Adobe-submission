@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "input_documents": [
+      "Breakfast Ideas.pdf",
+      "Dinner Ideas - Mains_1.pdf",
+      "Dinner Ideas - Mains_2.pdf",
+      "Dinner Ideas - Mains_3.pdf",
+      "Dinner Ideas - Sides_1.pdf",
+      "Dinner Ideas - Sides_2.pdf",
+      "Dinner Ideas - Sides_3.pdf",
+      "Dinner Ideas - Sides_4.pdf",
+      "Lunch Ideas.pdf"
+    ],
+    "persona": "Food Contractor",
+    "job_to_be_done": "Prepare a vegetarian buffet-style dinner menu for a corporate gathering, including gluten-free items.",
+    "processing_timestamp": "2025-08-09T14:37:58.413227"
+  },
+  "extracted_sections": [
+    {
+      "document": "Dinner Ideas - Mains_3.pdf",
+      "section_title": "Vegetable Lasagna",
+      "importance_rank": 1,
+      "page_number": 8
+    },
+    {
+      "document": "Breakfast Ideas.pdf",
+      "section_title": "Cottage Cheese and Veggie Bowl",
+      "importance_rank": 2,
+      "page_number": 16
+    },
+    {
+      "document": "Dinner Ideas - Mains_3.pdf",
+      "section_title": "Chopped parsley for garnish",
+      "importance_rank": 3,
+      "page_number": 7
+    },
+    {
+      "document": "Lunch Ideas.pdf",
+      "section_title": "Veggie Sushi Rolls",
+      "importance_rank": 4,
+      "page_number": 11
+    },
+    {
+      "document": "Dinner Ideas - Sides_1.pdf",
+      "section_title": "Baba Ganoush",
+      "importance_rank": 5,
+      "page_number": 4
+    }
+  ],
+  "subsection_analysis": [
+    {
+      "document": "Dinner Ideas - Mains_3.pdf",
+      "refined_text": " \n1 bell pepper, diced \n \n1 cup spinach, chopped \n \n1 jar (24 ounces) marinara sauce \n \n1 can (15 ounces) ricotta cheese \n \n1 egg \n \n1 cup shredded mozzarella cheese \n \n1/4 cup grated Parmesan cheese \n \n2 tablespoons olive oil \n \nSalt and pepper to taste \nInstructions: \n \nPreheat oven to 375°F (190°C). \n \nIn a skillet, heat olive oil over medium heat. Sauté onion, garlic, zucchini, and bell pepper \nuntil tender. Add spinach and cook until wilted. \n \nIn a bowl, mix ricotta cheese, egg, salt, and pepper. \n \nIn a baking dish, spread a thin layer of marinara sauce. Layer 3 noodles, half the ricotta \nmixture, half the vegetables, and 1/3 of the mozzarella. Repeat layers. \n \nTop with remaining noodles, marinara sauce, mozzarella, and Parmesan cheese. \n \nCover with foil and bake for 25 minutes. Remove foil and bake for another 20 minutes \nuntil bubbly. \n \nLet stand for 10 minutes before serving.",
+      "page_number": 8
+    },
+    {
+      "document": "Breakfast Ideas.pdf",
+      "refined_text": "• \nServe immediately. \n \n \n \nCottage Cheese and Veggie Bowl \nIngredients: \n• \n1 cup cottage cheese \n• \n1/4 cup diced cucumber \n• \n1/4 cup cherry tomatoes, halved \n• \n1/4 cup diced bell pepper \n• \nSalt and pepper to taste \nInstructions: \n• \nIn a bowl, combine cottage cheese, cucumber, cherry tomatoes, and bell pepper. \n• \nSeason with salt and pepper. \n• \nServe immediately. \n \n \n \n \nAlmond Butter and Apple Slices \nIngredients: \n• \n1 apple, sliced \n• \n2 tablespoons almond butter \nInstructions: \n• \nSpread almond butter on each apple slice. \n• \nServe immediately.",
+      "page_number": 16
+    },
+    {
+      "document": "Dinner Ideas - Mains_3.pdf",
+      "refined_text": " \nChopped parsley for garnish \n \nCooked couscous for serving \nInstructions: \n \nIn a large pot, heat olive oil over medium heat. \n \nBrown chicken thighs on all sides, then set aside. \n \nSauté onion and garlic until softened. \n \nStir in cumin, cinnamon, and turmeric, then add chicken broth, apricots, and olives. \n \nReturn chicken to the pot, cover, and simmer for 45 minutes until tender. \n \nSeason with salt and pepper. \n \nGarnish with parsley and serve over couscous. \n \n \n \nMushroom Risotto \nIngredients: \n \n1 cup Arborio rice \n \n4 cups chicken or vegetable broth \n \n1 small onion, diced \n \n2 cloves garlic, minced \n \n1 cup mushrooms, sliced \n \n1/2 cup white wine \n \n1/2 cup grated Parmesan cheese \n \n2 tablespoons butter \n \n2 tablespoons olive oil \n \nSalt and pepper to taste \n \nChopped parsley for garnish \nInstructions: \n \nHeat broth in a pot and keep warm. \n \nIn a large skillet, heat olive oil and 1 tablespoon butter over medium heat. \n \nSauté onion, garlic, and mushrooms until tender. \n \nAdd rice and stir for 1-2 minutes until lightly toasted. \n \nPour in white wine and cook until absorbed. \n \nAdd warm broth, one ladle at a time, stirring until absorbed before adding more, until \nrice is creamy and tender (about 20 minutes). \n \nStir in remaining butter and Parmesan cheese, season with salt and pepper. \n \nGarnish with parsley and serve. \n \n \n \nPulled Pork Sandwiches \nIngredients: \n \n2 pounds pork shoulder \n \n1 small onion, sliced \n \n2 cloves garlic, minced",
+      "page_number": 7
+    },
+    {
+      "document": "Lunch Ideas.pdf",
+      "refined_text": "• \n1/4 cup red onion, finely chopped \n• \n2 tablespoons olive oil \n• \n1 tablespoon lemon juice \n• \nSalt and pepper to taste \nInstructions: \n• \nIn a bowl, combine the tuna, avocado, tomatoes, and red onion. \n• \nDrizzle with olive oil and lemon juice. \n• \nSeason with salt and pepper, then toss to combine. \n \n \n \nVeggie Sushi Rolls \nIngredients: \n• \n1 cup cooked sushi rice \n• \n1/2 cucumber, julienned \n• \n1/2 avocado, sliced \n• \n1/4 cup carrot, julienned \n• \n2 sheets nori (seaweed) \n• \nSoy sauce for dipping \nInstructions: \n• \nLay a sheet of nori on a bamboo sushi mat. \n• \nSpread a thin layer of sushi rice over the nori, leaving a 1-inch border at the top. \n• \nArrange the cucumber, avocado, and carrot in a line along the bottom edge of the rice. \n• \nRoll the nori tightly using the bamboo mat. \n• \nSlice into bite-sized pieces and serve with soy sauce. \n \n \n \n \n \nSpinach and Feta Stuﬀed Pita \nIngredients: \n• \n1 whole wheat pita bread \n• \n1/2 cup spinach, chopped \n• \n1/4 cup feta cheese, crumbled \n• \n1/4 cup cherry tomatoes, halved \n• \n1 tablespoon olive oil \n• \nSalt and pepper to taste \nInstructions: \n• \nCut the pita bread in half to create pockets. \n• \nIn a bowl, combine the spinach, feta cheese, and cherry tomatoes. \n• \nDrizzle with olive oil and season with salt and pepper. \n• \nStuﬀ the mixture into the pita pockets.",
+      "page_number": 11
+    },
+    {
+      "document": "Dinner Ideas - Sides_1.pdf",
+      "refined_text": " \nInstructions: \no Form risotto into balls and stuff with a cube of mozzarella. \no Dredge balls in flour, dip in beaten eggs, and coat with breadcrumbs. \no Fry in hot oil until golden. \no Drain on paper towels and serve warm. \n \nBaba Ganoush \n \nIngredients: \no 2 eggplants \no 1/4 cup tahini \no 1/4 cup lemon juice \no 2 cloves garlic \no 1/4 cup olive oil \no 1 teaspoon salt \n \nInstructions: \no Roast eggplants until soft, then peel and mash. \no Blend mashed eggplant, tahini, lemon juice, minced garlic, and salt in a food \nprocessor. \no Slowly add olive oil while blending until smooth. \no Serve with a drizzle of olive oil. \n \nBaked Beans \n \nIngredients: \no 4 cups cooked navy beans \no 1 small onion \no 1/2 cup molasses \no 1/4 cup brown sugar \no 1/4 cup ketchup \no 1 tablespoon mustard \no 1 teaspoon salt \no 1/2 teaspoon pepper \n \nInstructions: \no Preheat oven to 350°F (175°C). \no Sauté diced onion until translucent. \no Mix beans, onion, molasses, brown sugar, ketchup, mustard, salt, and pepper in a \nbaking dish. \no Bake for 1 hour, stirring occasionally. \no Serve warm. \n \nBammy \n \nIngredients: \no 2 cups grated cassava \no 1/4 cup coconut milk \no 1 teaspoon salt",
+      "page_number": 4
+    }
+  ]
+}

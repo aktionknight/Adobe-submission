@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Adobe 1B Reader • Viewer</title>
+  <link rel="stylesheet" href="/app/styles.css" />
+  <script src="https://documentcloud.adobe.com/view-sdk/main.js"></script>
+</head>
+<body>
+  <header>
+    <div>Adobe 1B Reader • Viewer</div>
+    <div>
+      <a href="/app/" class="link-back">← Back</a>
+    </div>
+  </header>
+  <div class="viewer-container">
+    <div class="pdf-wrapper">
+      <div id="pdf-viewer">
+        <div id="loading-indicator">
+          <div>
+            <div>Loading Adobe PDF Viewer...</div>
+            <div></div>
+          </div>
+        </div>
+      </div>
+      <div class="pdf-tools">
+        <button class="btn-icon" id="btn-insights" title="Generate insights (Gemini)">💡</button>
+        <button class="btn-icon" id="btn-mic" title="Voice input (coming soon)">🎤</button>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <div class="card-header">
+          <h3>Top Sections</h3>
+          <div class="annotation-count-container">
+            <span class="annotation-count" id="annotation-count">0 highlights</span>
+            <button class="btn-clear" onclick="clearAllAnnotations()" title="Clear all highlights">🗑️</button>
+          </div>
+        </div>
+        <div id="sections" class="list"></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3>AI Insights</h3>
+          <div class="annotation-count-container">
+            <button class="btn-clear" onclick="generateInsights()" title="Generate insights">💡</button>
+          </div>
+        </div>
+        <div id="insights" class="list"></div>
+      </div>
+      <div class="card">
+        <h3>Extracted Text</h3>
+        <div id="extracted-text" class="list"></div>
+      </div>
+      <div class="card">
+        <h3>Related Sections</h3>
+        <div id="related" class="list"></div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Notification container -->
+  <div id="notification-container"></div>
+  
+  <script>
+  const res = JSON.parse(sessionStorage.getItem('analysis_result') || '{}');
+  const sectionsEl = document.getElementById('sections');
+  const extractedTextEl = document.getElementById('extracted-text');
+  const relatedEl = document.getElementById('related');
+  const insightsEl = document.getElementById('insights');
+
+  function escapeForAttribute(s) {
+    return String(s || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '\\"')
+      .replace(/\r?\n/g, ' ');
+  }
+
+  // --- Render UI ---
+  (res.extracted_sections || []).forEach(s => {
+    const safeTitle = escapeForAttribute(s.section_title || '');
+    const page = s.page_number || 1;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'section-item';
+    wrapper.innerHTML = `
+      <div class="section-header">
+        <span class="badge">#${s.importance_rank}</span> 
+        <b>${s.section_title}</b> 
+        <span class="muted">p.${page}</span>
+      </div>
+      <div class="section-actions">
+        <button class="btn-jump">Jump to Page</button>
+        <button class="btn-highlight">Highlight</button>
+      </div>
+    `;
+    wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
+    wrapper.querySelector('.btn-highlight').onclick = () => highlightSection(safeTitle, page);
+    sectionsEl.appendChild(wrapper);
+  });
+
+  (res.subsection_analysis || []).forEach(txt => {
+    const safeSnippet = escapeForAttribute(txt.refined_text || '');
+    const page = txt.page_number || 1;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'text-item';
+    wrapper.innerHTML = `
+      <div class="text-content">
+        <div class="text-header">
+          <b>${txt.document || ''}</b>
+          <span class="muted">p.${page}</span>
+        </div>
+        <div class="text-snippet">${txt.refined_text || ''}</div>
+      </div>
+      <div class="text-actions">
+        <button class="btn-jump">Jump to Page</button>
+        <button class="btn-highlight">Highlight</button>
+      </div>
+    `;
+    wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
+    wrapper.querySelector('.btn-highlight').onclick = () => highlightText(safeSnippet, page);
+    extractedTextEl.appendChild(wrapper);
+  });
+
+  (res.related_sections || []).forEach(group => {
+    const src = group.source || {};
+    const head = document.createElement('div');
+    head.innerHTML = `<div><b>${escapeForAttribute(src.section_title || '')}</b> <span class="muted">(p.${src.page_number || 1})</span></div>`;
+    relatedEl.appendChild(head);
+    (group.related || []).forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'related-item';
+      item.textContent = `↳ ${r.section_title} (${r.document}, p.${r.page_number})`;
+      item.onclick = () => renderPDF('/uploads/' + r.document, r.page_number);
+      relatedEl.appendChild(item);
+    });
+  });
+
+  let adobeDCView = null;
+  let adobeScriptReady = false;
+  let pdfLoaded = false;
+  let currentAnnotations = [];
+  let adobeApis = null;
+
+  function showNotification(message, type = 'info') {
+    const container = document.getElementById('notification-container');
+    if (!container) return;
+    const colors = { info: '#2196F3', success: '#4CAF50', warning: '#FF9800', error: '#f44336' };
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      background: ${colors[type] || colors.info};
+      color: white;
+      padding: 12px 20px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      max-width: 320px;
+    `;
+    notification.textContent = message;
+    container.appendChild(notification);
+    setTimeout(() => {
+      notification.style.opacity = '0';
+      setTimeout(() => notification.remove(), 300);
+    }, 3000);
+  }
+
+  function waitForAdobeScript() {
+    return new Promise((resolve, reject) => {
+      if (typeof AdobeDC !== 'undefined') {
+        adobeScriptReady = true;
+        resolve();
+        return;
+      }
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        if (typeof AdobeDC !== 'undefined') {
+          adobeScriptReady = true;
+          clearInterval(interval);
+          resolve();
+        } else if (attempts >= 100) {
+          clearInterval(interval);
+          reject(new Error('Adobe SDK not loaded'));
+        }
+      }, 100);
+    });
+  }
+
+  async function getAdobeAPIs() {
+    if (adobeApis) return adobeApis;
+    if (!adobeDCView) throw new Error('AdobeDCView not initialized');
+    if (typeof adobeDCView.getAPIsPromise === 'function') {
+      adobeApis = await adobeDCView.getAPIsPromise();
+    } else if (typeof adobeDCView.getAPIs === 'function') {
+      const maybe = adobeDCView.getAPIs();
+      adobeApis = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+    }
+    return adobeApis;
+  }
+
+  function waitForPDFReady(timeout = 15000) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      (function check() {
+        if (pdfLoaded && adobeApis) return resolve();
+        if (Date.now() - start > timeout) return reject(new Error('PDF not ready'));
+        setTimeout(check, 200);
+      })();
+    });
+  }
+
+  function makeDocumentId(url) {
+    return 'doc_' + String(url || '').replace(/[^a-zA-Z0-9]/g, '_').slice(-50);
+  }
+
+  function renderPDF(url, pageNum) {
+    const clientId = localStorage.getItem('adobe_embed_client_id') || 'YOUR_ADOBE_EMBED_CLIENT_ID';
+    if (clientId === 'YOUR_ADOBE_EMBED_CLIENT_ID') {
+      alert('Adobe API key not configured.');
+      return;
+    }
+    pdfLoaded = false;
+    adobeApis = null;
+    waitForAdobeScript().then(() => {
+      if (!adobeDCView) {
+        adobeDCView = new AdobeDC.View({ clientId, divId: 'pdf-viewer' });
+      }
+      adobeDCView.previewFile(
+        { content: { location: { url } }, metaData: { fileName: url.split('/').pop(), id: makeDocumentId(url) } },
+        { embedMode: 'SIZED_CONTAINER', enableAnnotationAPIs: true, enableSearchAPIs: true, includePDFAnnotations: true, showAnnotationTools: false }
+      ).then(() => {
+        adobeDCView.registerCallback(
+          AdobeDC.View.Enum.CallbackType.EVENT_LISTENER,
+          async (event) => {
+            if ((event && event.type) === 'APP_RENDERING_DONE') {
+              try {
+                await getAdobeAPIs();
+                pdfLoaded = true;
+                if (pageNum) adobeApis.gotoLocation(parseInt(pageNum, 10));
+              } catch (err) {
+                console.error('Error getting APIs:', err);
+              }
+            }
+          },
+          { enableFilePreviewEvents: true }
+        );
+      }).catch(err => showNotification('Failed to load PDF', 'error'));
+    }).catch(err => showNotification('Adobe SDK not ready', 'error'));
+  }
+
+  async function jumpToPage(page) {
+    try {
+      await waitForPDFReady();
+      (await getAdobeAPIs()).gotoLocation(parseInt(page, 10));
+    } catch (err) {
+      showNotification('Cannot jump to page', 'error');
+    }
+  }
+
+  async function highlightSection(sectionTitle, pageNum) {
+    try {
+      await waitForPDFReady();
+      await jumpToPage(pageNum);
+      setTimeout(() => searchAndHighlight(sectionTitle, pageNum), 600);
+    } catch {
+      showNotification('PDF not ready', 'warning');
+    }
+  }
+
+  async function highlightText(text, pageNum) {
+    try {
+      await waitForPDFReady();
+      await jumpToPage(pageNum);
+      setTimeout(() => searchAndHighlight(text, pageNum), 600);
+    } catch {
+      showNotification('PDF not ready', 'warning');
+    }
+  }
+
+  async function searchAndHighlight(searchText, pageNum) {
+    try {
+      const results = await (await getAdobeAPIs()).search(searchText);
+      const pageResults = results.filter(r => r.pageIndex === (pageNum - 1));
+      if (pageResults.length) {
+        await addHighlightAnnotation(pageResults[0], searchText);
+      } else {
+        showNotification('No results found', 'warning');
+      }
+    } catch {
+      showNotification('Search failed', 'error');
+    }
+  }
+
+  async function addHighlightAnnotation(searchResult, searchText) {
+    try {
+      await (await getAdobeAPIs()).addAnnotation({
+        type: 'highlight',
+        pageIndex: searchResult.pageIndex,
+        rect: searchResult.rect,
+        color: { red: 255, green: 255, blue: 0, alpha: 0.3 },
+        author: 'Adobe 1B Reader',
+        contents: `Highlighted: ${String(searchText).substring(0, 50)}...`
+      });
+      currentAnnotations.push(searchResult);
+      updateAnnotationCount();
+      showNotification('Highlight added', 'success');
+    } catch {
+      showNotification('Failed to add highlight', 'error');
+    }
+  }
+
+  async function clearAllAnnotations() {
+    try {
+      const apis = await getAdobeAPIs();
+      await Promise.all(currentAnnotations.map(a => apis.deleteAnnotation(a).catch(() => {})));
+      currentAnnotations = [];
+      updateAnnotationCount();
+      showNotification('All highlights cleared', 'success');
+    } catch {
+      showNotification('Failed to clear highlights', 'error');
+    }
+  }
+
+  function updateAnnotationCount() {
+    const el = document.getElementById('annotation-count');
+    if (!el) return;
+    const c = currentAnnotations.length;
+    el.textContent = `${c} highlight${c !== 1 ? 's' : ''}`;
+    el.style.color = c > 0 ? '#4CAF50' : '#666';
+  }
+
+  if (res.file_url) {
+    setTimeout(() => renderPDF(res.file_url), 500);
+  }
+  updateAnnotationCount();
+
+  // --- Insights / Mic buttons ---
+  const btnInsights = document.getElementById('btn-insights');
+  const btnMic = document.getElementById('btn-mic');
+  if (btnInsights) btnInsights.onclick = () => generateInsights();
+  if (btnMic) btnMic.onclick = () => generatePodcast();
+
+  async function generateInsights() {
+    try {
+      if (!res || !res.file_url) {
+        showNotification('No document context', 'warning');
+        return;
+      }
+      showNotification('Generating insights...', 'info');
+      const filename = (res.file_url.split('/').pop()) || '';
+      const form = new FormData();
+      form.append('filename', filename);
+      // Optional persona context if present
+      if (res && res.metadata) {
+        form.append('persona', res.metadata.persona || '');
+        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+      }
+      const r = await fetch('/api/insights', { method: 'POST', body: form });
+      if (!r.ok) throw new Error('Failed');
+      const data = await r.json();
+      renderInsights(data);
+      showNotification('Insights ready', 'success');
+    } catch (e) {
+      showNotification('Failed to generate insights', 'error');
+    }
+  }
+
+  async function generatePodcast() {
+    try {
+      if (!res || !res.file_url) { showNotification('No document context', 'warning'); return; }
+      showNotification('Creating podcast...', 'info');
+      const filename = (res.file_url.split('/').pop()) || '';
+      const form = new FormData();
+      form.append('filename', filename);
+      if (res && res.metadata) {
+        form.append('persona', res.metadata.persona || '');
+        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+      }
+      const r = await fetch('/api/podcast', { method: 'POST', body: form });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      // If insights are included, render them too so podcast works standalone
+      if (data && data.insights) renderInsights(data.insights);
+      renderPodcast(data);
+      showNotification('Podcast ready', 'success');
+    } catch (e) {
+      console.error(e);
+      showNotification('Failed to create podcast', 'error');
+    }
+  }
+
+  function renderPodcast(data) {
+    if (!data || !data.audio_url) return;
+    const container = document.createElement('div');
+    container.className = 'card';
+    const title = document.createElement('h3');
+    title.textContent = 'Podcast';
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.src = data.audio_url;
+    audio.style.width = '100%';
+    const scriptEl = document.createElement('details');
+    const sum = document.createElement('summary');
+    sum.textContent = 'Show script';
+    const pre = document.createElement('pre');
+    pre.style.whiteSpace = 'pre-wrap';
+    pre.textContent = data.script || '';
+    scriptEl.appendChild(sum);
+    scriptEl.appendChild(pre);
+    container.appendChild(title);
+    container.appendChild(audio);
+    container.appendChild(scriptEl);
+    // Insert at top of sidebar
+    const side = document.querySelector('.side');
+    side && side.insertBefore(container, side.firstChild);
+    try { audio.play().catch(()=>{}); } catch {}
+  }
+
+  function renderInsights(data) {
+    if (!insightsEl) return;
+    insightsEl.innerHTML = '';
+    const groups = [
+      { key: 'key_insights', title: 'Key Insights' },
+      { key: 'did_you_know_facts', title: 'Did you know?' },
+      { key: 'contradictions_or_counterpoints', title: 'Contradictions / Counterpoints' },
+      { key: 'inspirations_or_connections', title: 'Inspirations / Connections' },
+    ];
+    groups.forEach(g => {
+      const items = data && Array.isArray(data[g.key]) ? data[g.key] : [];
+      const wrap = document.createElement('div');
+      wrap.className = 'insight-group';
+      const h = document.createElement('div');
+      h.className = 'insight-title';
+      h.textContent = g.title;
+      wrap.appendChild(h);
+      const ul = document.createElement('ul');
+      ul.className = 'insight-list';
+      items.forEach(t => {
+        const li = document.createElement('li');
+        li.textContent = String(t);
+        ul.appendChild(li);
+      });
+      if (!items.length) {
+        const li = document.createElement('div');
+        li.className = 'muted';
+        li.textContent = 'No items';
+        wrap.appendChild(li);
+      } else {
+        wrap.appendChild(ul);
+      }
+      insightsEl.appendChild(wrap);
+    });
+  }
+</script>
+
+</body>
+</html>

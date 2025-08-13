@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Adobe 1B Reader • Upload & Analyze</title>
+  <link rel="stylesheet" href="/app/styles.css" />
+</head>
+<body>
+  <header>
+    <div>Adobe 1B Reader • Upload & Analyze</div>
+    <div class="muted">Tip: set your Adobe Embed Client ID in console → localStorage.setItem('adobe_embed_client_id','YOUR_ID')</div>
+  </header>
+  <div class="container">
+    <div class="card">
+      <div class="row">
+        <input type="file" id="file-input" multiple accept="application/pdf" />
+        <button id="upload">Upload</button>
+        <button id="refresh">Clear All Files</button>
+      </div>
+      <div id="docs" class="docs"></div>
+    </div>
+
+    <div class="card">
+      <div class="col">
+        <div class="row">
+          <label class="label-fixed">Select PDF</label>
+          <select id="doc-select" class="flex-1"></select>
+        </div>
+        <div class="row">
+          <label class="label-fixed">Persona</label>
+          <input type="text" id="persona" class="flex-1" placeholder="e.g., Travel Planner, Food Critic, HR Professional" />
+        </div>
+        <div class="row">
+          <label class="label-fixed">Job to be done</label>
+          <input type="text" id="job" class="flex-1" placeholder="e.g., Plan a trip for college friends, Create employee onboarding forms" />
+        </div>
+        <div class="row justify-end">
+          <button id="analyze">Analyze →</button>
+        </div>
+        <div class="muted" id="status"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay" class="overlay">
+    <div class="center">
+      <div class="spinner"></div>
+      <div id="overlay-text">Analyzing…</div>
+    </div>
+  </div>
+
+  <script>
+    let adobeApiKey = '';
+    
+    // Fetch configuration including Adobe API key
+    async function loadConfig() {
+      try {
+        const config = await api('/api/config');
+        adobeApiKey = config.adobe_api_key;
+        if (adobeApiKey && adobeApiKey !== 'YOUR_ADOBE_EMBED_CLIENT_ID_HERE') {
+          // Store in localStorage for the viewer
+          localStorage.setItem('adobe_embed_client_id', adobeApiKey);
+          // Update the tip message
+          const tipElement = document.querySelector('.muted');
+          if (tipElement) {
+            tipElement.textContent = 'Adobe API key loaded from server configuration';
+            tipElement.style.color = '#4CAF50';
+          }
+        } else {
+          const tipElement = document.querySelector('.muted');
+          if (tipElement) {
+            tipElement.textContent = 'Warning: Adobe API key not configured. Set ADOBE_API in .env file.';
+            tipElement.style.color = '#f44336';
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load config:', e);
+        const tipElement = document.querySelector('.muted');
+        if (tipElement) {
+          tipElement.textContent = 'Error: Cannot load configuration from server';
+          tipElement.style.color = '#f44336';
+        }
+      }
+    }
+
+    const api = async (path, opts={}) => {
+      // Ensure API calls are made to the correct base URL
+      const baseUrl = window.location.origin; // e.g., http://127.0.0.1:8000
+      const fullUrl = path.startsWith('/') ? baseUrl + path : baseUrl + '/' + path;
+      const r = await fetch(fullUrl, opts);
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`HTTP ${r.status}: ${text}`);
+      }
+      return r.json();
+    };
+    const docSelect = document.getElementById('doc-select');
+    const docsEl = document.getElementById('docs');
+    const overlay = document.getElementById('overlay');
+    const overlayText = document.getElementById('overlay-text');
+    const statusEl = document.getElementById('status');
+
+    async function refreshDocs() {
+      try {
+        const data = await api('/api/documents');
+        docSelect.innerHTML = '';
+        docsEl.innerHTML = '';
+        (data.documents || []).forEach(d => {
+          const o = document.createElement('option');
+          o.value = d.name; o.textContent = d.name; docSelect.appendChild(o);
+          const card = document.createElement('div'); card.className = 'doc'; card.textContent = d.name; docsEl.appendChild(card);
+        });
+      } catch (e) {
+        console.error('refreshDocs error', e);
+        statusEl.textContent = 'Cannot reach API. Is the FastAPI server running on port 8000?';
+      }
+    }
+
+    async function clearAllDocs() {
+      if (!confirm('Are you sure you want to delete all uploaded files?')) return;
+      try {
+        overlay.style.display = 'flex'; overlayText.textContent = 'Clearing files…';
+        await api('/api/documents', { method: 'DELETE' });
+        await refreshDocs();
+        overlay.style.display = 'none';
+        statusEl.textContent = 'All files cleared successfully';
+        setTimeout(() => statusEl.textContent = '', 3000);
+      } catch (e) {
+        overlay.style.display = 'none';
+        console.error('clearAllDocs error', e);
+        statusEl.textContent = 'Failed to clear files. See console.';
+      }
+    }
+
+    document.getElementById('refresh').onclick = clearAllDocs;
+    
+    // Load configuration and then refresh documents
+    loadConfig().then(() => refreshDocs());
+
+    document.getElementById('upload').onclick = async () => {
+      const files = document.getElementById('file-input').files;
+      if (!files.length) return;
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+      overlay.style.display = 'flex'; overlayText.textContent = 'Uploading…';
+      await api('/api/upload', { method: 'POST', body: fd });
+      overlay.style.display = 'none';
+      await refreshDocs();
+    };
+
+    document.getElementById('analyze').onclick = async () => {
+      if (!docSelect.value) { alert('Select a PDF first.'); return; }
+      const persona = document.getElementById('persona').value.trim();
+      const job = document.getElementById('job').value.trim();
+      if (!persona) { alert('Please enter a persona.'); return; }
+      if (!job) { alert('Please enter a job to be done.'); return; }
+      const fd = new FormData();
+      fd.append('filename', docSelect.value);
+      fd.append('persona', persona);
+      fd.append('job_to_be_done', job);
+      overlay.style.display = 'flex'; overlayText.textContent = 'Analyzing…';
+      try {
+        const res = await api('/api/analyze', { method: 'POST', body: fd });
+        sessionStorage.setItem('analysis_result', JSON.stringify(res));
+        sessionStorage.setItem('persona', persona);
+        sessionStorage.setItem('job', job);
+        window.location.href = '/app/viewer.html';
+      } catch (e) {
+        overlay.style.display = 'none';
+        statusEl.textContent = 'Failed to analyze. See console.';
+        console.error(e);
+      }
+    };
+  </script>
+</body>
+</html> 
