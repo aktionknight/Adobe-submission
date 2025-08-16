@@ -75,10 +75,10 @@ def ping() -> Dict[str, Any]:
 def get_config() -> Dict[str, Any]:
     """Get configuration including Adobe API key"""
     return {
-        "adobe_api_key": os.getenv("ADOBE_API", ""),
+        "adobe_api_key": os.getenv("ADOBE_EMBED_API_KEY", ""),
         "server_info": {
-            "host": os.getenv("HOST", "127.0.0.1"),
-            "port": int(os.getenv("PORT", "8000"))
+            "host": os.getenv("HOST", "localhost"),
+            "port": int(os.getenv("PORT", "8080"))
         }
     }
 
@@ -86,6 +86,7 @@ def get_config() -> Dict[str, Any]:
 class AnalysisCache:
     def __init__(self) -> None:
         self._cache: Dict[str, Dict[str, Any]] = {}
+        self._background_processed: bool = False
 
     @staticmethod
     def _hash_path(path: str) -> str:
@@ -104,9 +105,117 @@ class AnalysisCache:
         key = self._hash_path(path)
         self._cache[key] = value
 
+    def is_background_processed(self) -> bool:
+        return self._background_processed
+
+    def set_background_processed(self, value: bool) -> None:
+        self._background_processed = value
+
+    def get_all_sections(self) -> List[Dict[str, Any]]:
+        """Get all sections from all cached PDFs for cross-document search"""
+        all_sections = []
+        for cached_data in self._cache.values():
+            sections = cached_data.get("sections", [])
+            for section in sections:
+                all_sections.append({
+                    "document": cached_data.get("title", "Unknown"),
+                    "title": section["title"],
+                    "content": section["content"],
+                    "page": section["page"],
+                    "file_path": cached_data.get("file_path", "")
+                })
+        return all_sections
+
 
 analysis_cache = AnalysisCache()
 ranker_singleton = SectionRanker()
+
+
+def process_all_pdfs_background():
+    """Process all uploaded PDFs in the background to cache their sections"""
+    if analysis_cache.is_background_processed():
+        return
+    
+    try:
+        for fname in os.listdir(UPLOADS_DIR):
+            if not fname.lower().endswith('.pdf'):
+                continue
+            pdf_path = os.path.join(UPLOADS_DIR, fname)
+            if not analysis_cache.get(pdf_path):
+                title, headings = extract_1a_data(pdf_path)
+                sections = extract_section_content(pdf_path, headings)
+                analysis_cache.set(pdf_path, {
+                    "title": title,
+                    "headings": headings,
+                    "sections": sections,
+                    "file_path": pdf_path
+                })
+        analysis_cache.set_background_processed(True)
+    except Exception as e:
+        print(f"Background processing failed: {e}")
+
+def get_recommendations_for_text(
+    selected_text: str,
+    persona: str,
+    job_to_be_done: str,
+    top_k: int = 5
+) -> Dict[str, Any]:
+    """Get recommendations based ONLY on selected text."""
+    process_all_pdfs_background()
+    all_sections = analysis_cache.get_all_sections()
+    if not all_sections:
+        return {
+            "recommendations": [],
+            "message": "No documents available for analysis"
+        }
+
+    query_text = selected_text.strip()
+
+    import torch
+    with torch.no_grad():
+        device = torch.device("cpu")
+        query_embedding = ranker_singleton.model.encode(
+            [query_text], convert_to_tensor=True, convert_to_numpy=True, device=device
+        )[0]
+
+    # Encode each section separately (title + its own content only)
+    section_texts = []
+    for section in all_sections:
+        title = section["title"].strip()
+        content = section["content"].strip()
+        context = f"{title}. {content}"
+        section_texts.append(context)
+
+    section_embeddings = ranker_singleton.model.encode(
+        section_texts, convert_to_tensor=True, convert_to_numpy=True, device=torch.device("cpu")
+    )
+
+    from sklearn.metrics.pairwise import cosine_similarity
+    similarities = cosine_similarity([query_embedding], section_embeddings)[0]
+
+    # Rank results
+    ranked_sections = []
+    for section, similarity in zip(all_sections, similarities):
+        # 👇 only preview the content of that specific section
+        preview = section["content"].strip()
+        if len(preview) > 300:  # limit preview length
+            preview = preview[:300] + "..."
+        
+        ranked_sections.append({
+            "document": section["document"],
+            "section_title": section["title"],
+            "page_number": section["page"],
+            "similarity": float(similarity),
+            "content_preview": preview
+        })
+
+    ranked_sections.sort(key=lambda x: x["similarity"], reverse=True)
+    return {
+        "recommendations": ranked_sections[:top_k],
+        "query_text": query_text,
+        "total_sections_analyzed": len(all_sections)
+    }
+
 
 
 def analyze_pdf(
@@ -266,13 +375,14 @@ def compute_related_sections(
         # Encode this section
         import torch
         with torch.no_grad():
-            this_emb = ranker_singleton.model.encode([this_context], convert_to_tensor=True, convert_to_numpy=True)[0]
+            device = torch.device('cpu')
+            this_emb = ranker_singleton.model.encode([this_context], convert_to_tensor=True, convert_to_numpy=True, device=device)[0]
         # Compare to other sections
         candidates: List[Tuple[float, Dict[str, Any]]] = []
         if other_sections:
             other_texts = [title + ". " + s["content"][:1000] for title, s in [(s[1]["title"], s[1]) for s in other_sections]]
             with torch.no_grad():
-                other_embs = ranker_singleton.model.encode(other_texts, convert_to_tensor=True, convert_to_numpy=True)
+                other_embs = ranker_singleton.model.encode(other_texts, convert_to_tensor=True, convert_to_numpy=True, device=device)
             from sklearn.metrics.pairwise import cosine_similarity
             sims = cosine_similarity([this_emb], other_embs)[0]
             for (fname, s), sim in zip(other_sections, sims):
@@ -341,6 +451,7 @@ async def insights(
     filename: str = Form(...),
     persona: str = Form(""),
     job_to_be_done: str = Form(""),
+    text: str = Form(""),  # New parameter for selected text
 ):
     api_key = os.getenv("GEMINI_API", "").strip()
     if not api_key:
@@ -353,6 +464,42 @@ async def insights(
         # Ensure current document cached
         cached = _ensure_cached(pdf_path)
         sections = cached.get("sections", [])
+        
+        # If text is provided, focus on sections containing that text
+        if text and text.strip():
+            # Find sections that contain the selected text
+            relevant_sections = []
+            for s in sections:
+                if text.lower() in s["content"].lower():
+                    relevant_sections.append(s)
+            
+            if relevant_sections:
+                sections = relevant_sections
+            # If no exact matches, use semantic search
+            else:
+                # Use the 1B model to find semantically similar sections
+                query_embedding, query_text = ranker_singleton.create_query_embedding(
+                    persona, job_to_be_done
+                )
+                
+                # Create embeddings for all sections
+                section_texts = [f"{s['title']}. {s['content'][:500]}" for s in sections]
+                import torch
+                with torch.no_grad():
+                    device = torch.device('cpu')
+                    section_embeddings = ranker_singleton.model.encode(
+                        section_texts, convert_to_tensor=True, convert_to_numpy=True, device=device
+                    )
+                
+                # Calculate similarities
+                from sklearn.metrics.pairwise import cosine_similarity
+                similarities = cosine_similarity([query_embedding], section_embeddings)[0]
+                
+                # Sort sections by similarity to selected text
+                section_similarities = list(zip(sections, similarities))
+                section_similarities.sort(key=lambda x: x[1], reverse=True)
+                sections = [s[0] for s in section_similarities[:5]]  # Top 5 most similar
+        
         # Focus on top sections using ranker for better context
         ranked = ranker_singleton.rank_sections(
             [
@@ -403,13 +550,36 @@ async def insights(
 
         # Configure Gemini (use a widely supported model and JSON mime type)
         genai.configure(api_key=api_key)
-        system_instructions = (
-    "You are an analytical assistant. Given document excerpts and optional cross-document context, "
-    "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-    "For contradictions_or_counterpoints, look for factual inconsistencies, different interpretations, or alternative perspectives, "
-    "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
-    "For each claim, suggest an alternate interpretation or scenario where it may not be true."
-)
+        
+        # Customize system instructions based on whether text is selected
+        if text and text.strip():
+            system_instructions = (
+                "You are an analytical assistant. Given selected text and document excerpts, "
+                "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
+                "Focus your analysis on the selected text and how it relates to the broader document context. "
+                "For contradictions_or_counterpoints, look for factual inconsistencies, different interpretations, or alternative perspectives, "
+                "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
+                "For each claim, suggest an alternate interpretation or scenario where it may not be true."
+            )
+            prompt = (
+                f"Selected Text: {text.strip()}\n\n"
+                f"Persona: {persona or 'N/A'}\n"
+                f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
+                "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
+        else:
+            system_instructions = (
+                "You are an analytical assistant. Given document excerpts and optional cross-document context, "
+                "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
+                "For contradictions_or_counterpoints, look for factual inconsistencies, different interpretations, or alternative perspectives, "
+                "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
+                "For each claim, suggest an alternate interpretation or scenario where it may not be true."
+            )
+            prompt = (
+                f"Persona: {persona or 'N/A'}\n"
+                f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
+                "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
 
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
@@ -421,11 +591,6 @@ async def insights(
             },
         )
 
-        prompt = (
-            f"Persona: {persona or 'N/A'}\n"
-            f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
-            "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
-        )
         if connections_context:
             prompt += "Connections Candidates (from other docs):\n" + "\n\n".join(connections_context[:12]) + "\n\n"
 
@@ -465,6 +630,7 @@ async def podcast(
     filename: str = Form(...),
     persona: str = Form(""),
     job_to_be_done: str = Form(""),
+    text: str = Form(""),  # New parameter for selected text
 ):
     api_key = os.getenv("GEMINI_API", "").strip()
     if not api_key:
@@ -476,11 +642,46 @@ async def podcast(
     # Step 1: get insights JSON by calling the same logic as /api/insights
     try:
         # Reuse insights generation
-        fake_form = {"filename": filename, "persona": persona, "job_to_be_done": job_to_be_done}
+        fake_form = {"filename": filename, "persona": persona, "job_to_be_done": job_to_be_done, "text": text}
         # Call internal function by simulating request: easiest is to reuse blocks here
         # Ensure cache and ranked contexts
         cached = _ensure_cached(pdf_path)
         sections = cached.get("sections", [])
+        
+        # If text is provided, focus on sections containing that text
+        if text and text.strip():
+            # Find sections that contain the selected text
+            relevant_sections = []
+            for s in sections:
+                if text.lower() in s["content"].lower():
+                    relevant_sections.append(s)
+            
+            if relevant_sections:
+                sections = relevant_sections
+            # If no exact matches, use semantic search
+            else:
+                # Use the 1B model to find semantically similar sections
+                query_embedding, query_text = ranker_singleton.create_query_embedding(
+                    persona, job_to_be_done
+                )
+                
+                # Create embeddings for all sections
+                section_texts = [f"{s['title']}. {s['content'][:500]}" for s in sections]
+                import torch
+                with torch.no_grad():
+                    section_embeddings = ranker_singleton.model.encode(
+                        section_texts, convert_to_tensor=True, convert_to_numpy=True
+                    )
+                
+                # Calculate similarities
+                from sklearn.metrics.pairwise import cosine_similarity
+                similarities = cosine_similarity([query_embedding], section_embeddings)[0]
+                
+                # Sort sections by similarity to selected text
+                section_similarities = list(zip(sections, similarities))
+                section_similarities.sort(key=lambda x: x[1], reverse=True)
+                sections = [s[0] for s in section_similarities[:5]]  # Top 5 most similar
+        
         ranked = ranker_singleton.rank_sections(
             [
                 {"document": os.path.basename(pdf_path), "title": s["title"], "content": s["content"], "page": s["page"]}
@@ -517,11 +718,22 @@ async def podcast(
             model_name="gemini-1.5-flash",
             generation_config={"response_mime_type": "application/json", "temperature": 0.3},
         )
-        insights_prompt = (
-            "Summarize the core insights from the following notes. Return strictly JSON with keys: "
-            "key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections.\n\n"
-            + "Current Doc Notes:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
-        )
+        
+        # Customize prompt based on whether text is selected
+        if text and text.strip():
+            insights_prompt = (
+                f"Selected Text: {text.strip()}\n\n"
+                "Summarize the core insights from the following notes, focusing on the selected text. Return strictly JSON with keys: "
+                "key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections.\n\n"
+                + "Current Doc Notes:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
+        else:
+            insights_prompt = (
+                "Summarize the core insights from the following notes. Return strictly JSON with keys: "
+                "key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections.\n\n"
+                + "Current Doc Notes:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
+            
         if connections_context:
             insights_prompt += "Cross-doc Notes:\n" + "\n\n".join(connections_context[:10]) + "\n\n"
         insights_response = insights_model.generate_content(insights_prompt)
@@ -535,15 +747,31 @@ async def podcast(
             model_name="gemini-1.5-flash",
             generation_config={"temperature": 0.7, "max_output_tokens": 2048},
         )
-        script_prompt = (
-            "You are a podcast host duo with two speakers: HOST_A and HOST_B. Turn the following structured insights into a 2-3 minute conversational script. "
-            "Rules: strictly format each line as 'HOST_A: ...' or 'HOST_B: ...'. No other prefixes, no stage directions. "
-            "Ensure a natural alternating conversation (but do not force rigid alternation) and keep sentences spoken by only the labeled host. "
-            "Make it engaging, friendly, and informative with light transitions and a short recap at the end.\n\n"
-            f"Persona: {persona or 'N/A'} | Job To Be Done: {job_to_be_done or 'N/A'}\n\n"
-            f"Insights JSON:\n{json.dumps(insights_data, ensure_ascii=False, indent=2)}\n\n"
-            "Return only the script text with lines starting by HOST_A: or HOST_B: ."
-        )
+        
+        # Customize script prompt based on whether text is selected
+        if text and text.strip():
+            script_prompt = (
+                "You are a podcast host duo with two speakers: HOST_A and HOST_B. Turn the following structured insights into a 2-3 minute conversational script. "
+                "Focus your discussion on the selected text and how it relates to the broader context. "
+                "Rules: strictly format each line as 'HOST_A: ...' or 'HOST_B: ...'. No other prefixes, no stage directions. "
+                "Ensure a natural alternating conversation (but do not force rigid alternation) and keep sentences spoken by only the labeled host. "
+                "Make it engaging, friendly, and informative with light transitions and a short recap at the end.\n\n"
+                f"Selected Text: {text.strip()}\n\n"
+                f"Persona: {persona or 'N/A'} | Job To Be Done: {job_to_be_done or 'N/A'}\n\n"
+                f"Insights JSON:\n{json.dumps(insights_data, ensure_ascii=False, indent=2)}\n\n"
+                "Return only the script text with lines starting by HOST_A: or HOST_B: ."
+            )
+        else:
+            script_prompt = (
+                "You are a podcast host duo with two speakers: HOST_A and HOST_B. Turn the following structured insights into a 2-3 minute conversational script. "
+                "Rules: strictly format each line as 'HOST_A: ...' or 'HOST_B: ...'. No other prefixes, no stage directions. "
+                "Ensure a natural alternating conversation (but do not force rigid alternation) and keep sentences spoken by only the labeled host. "
+                "Make it engaging, friendly, and informative with light transitions and a short recap at the end.\n\n"
+                f"Persona: {persona or 'N/A'} | Job To Be Done: {job_to_be_done or 'N/A'}\n\n"
+                f"Insights JSON:\n{json.dumps(insights_data, ensure_ascii=False, indent=2)}\n\n"
+                "Return only the script text with lines starting by HOST_A: or HOST_B: ."
+            )
+            
         script_response = script_model.generate_content(script_prompt)
         script_text = getattr(script_response, "text", "").strip()
         if not script_text:
@@ -613,17 +841,25 @@ async def podcast(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Podcast failed: {str(e)}")
 
+from urllib.parse import quote
+
 @app.post("/api/upload")
 async def upload(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
     saved: List[str] = []
     for f in files:
         if not f.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail=f"Only PDF files are supported: {f.filename}")
+        
+        # Save with original filename
         dest = os.path.join(UPLOADS_DIR, os.path.basename(f.filename))
         content = await f.read()
         with open(dest, 'wb') as out:
             out.write(content)
-        saved.append(f"/uploads/{os.path.basename(dest)}")
+
+        # Encode spaces & special chars for safe URL use
+        encoded_name = quote(os.path.basename(dest))
+        saved.append(f"/uploads/{encoded_name}")
+    
     return {"saved": saved}
 
 
@@ -661,6 +897,52 @@ async def analyze(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from urllib.parse import quote
+
+@app.post("/api/recommendations")
+async def get_recommendations(
+    selected_text: str = Form(...),
+    persona: str = Form(""),
+    job_to_be_done: str = Form(""),
+    top_k: int = Form(5)
+):
+    """Get recommendations based on selected text using 1B-esque query system"""
+    try:
+        if not selected_text.strip():
+            raise HTTPException(status_code=400, detail="Selected text cannot be empty")
+        
+        result = get_recommendations_for_text(
+            selected_text.strip(),
+            persona.strip(),
+            job_to_be_done.strip(),
+            top_k
+        )
+
+        # --- PATCH: add file_url with proper encoding ---
+        recommendations = result.get("recommendations", [])
+        for rec in recommendations:
+            if "document" in rec:
+                # Assume document holds the filename (relative)
+                safe_name = quote(rec["document"])
+                rec["file_url"] = f"/uploads/{safe_name}"
+
+        return JSONResponse(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recommendations failed: {str(e)}")
+
+
+@app.post("/api/background-process")
+async def trigger_background_processing():
+    """Trigger background processing of all uploaded PDFs"""
+    try:
+        process_all_pdfs_background()
+        return {"message": "Background processing completed", "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Background processing failed: {str(e)}")
+
+
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok"}
@@ -681,4 +963,4 @@ def clear_all_documents() -> Dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True) 
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

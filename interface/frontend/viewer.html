@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Adobe 1B Reader • Viewer</title>
   <link rel="stylesheet" href="/app/styles.css" />
+  <!-- Adobe View SDK -->
   <script src="https://documentcloud.adobe.com/view-sdk/main.js"></script>
 </head>
 <body>
@@ -14,9 +15,10 @@
       <a href="/app/" class="link-back">← Back</a>
     </div>
   </header>
+
   <div class="viewer-container">
     <div class="pdf-wrapper">
-      <div id="pdf-viewer">
+      <div id="adobe-dc-view">
         <div id="loading-indicator">
           <div>
             <div>Loading Adobe PDF Viewer...</div>
@@ -25,21 +27,45 @@
         </div>
       </div>
       <div class="pdf-tools">
-        <button class="btn-icon" id="btn-insights" title="Generate insights (Gemini)">💡</button>
-        <button class="btn-icon" id="btn-mic" title="Voice input (coming soon)">🎤</button>
+        <button class="btn-icon" id="btn-insights" title="Generate insights">💡</button>
+        <button class="btn-icon" id="btn-mic" title="Create podcast">🎤</button>
       </div>
     </div>
+
     <div class="side">
-      <div class="card">
+
+            <div class="card">
+        <h3>Selected Text Recommendations</h3>
         <div class="card-header">
-          <h3>Top Sections</h3>
-          <div class="annotation-count-container">
-            <span class="annotation-count" id="annotation-count">0 highlights</span>
-            <button class="btn-clear" onclick="clearAllAnnotations()" title="Clear all highlights">🗑️</button>
+          <span class="selected-text-info" id="selected-text-info">No text selected</span>
+          <div class="selection-controls">
+            <button class="btn-clear" onclick="clearSelectedText()" title="Clear text selection" id="btn-clear-selection">🗑️</button>
+            <button class="btn-clear" onclick="retryGetAdobeAPIs()" title="Retry Adobe APIs" id="btn-retry-apis">🔄</button>
+            <button class="btn-clear" onclick="testAdobeAPIs()" title="Test Adobe APIs" id="btn-test-apis">🧪</button>
+            <button class="btn-clear" onclick="checkAdobeAPIsStatus()" title="Check Adobe APIs status" id="btn-status">📊</button>
+            <button class="btn-clear" onclick="generateTextRecommendations()" title="Generate recommendations" id="btn-text-recommendations" disabled>💡</button>
           </div>
         </div>
-        <div id="sections" class="list"></div>
+        <div class="help-text">
+          <small>💡 <strong>Tip:</strong> Select text in the PDF to see insights and podcast buttons. Double-click outside to clear selection.</small>
+        </div>
+        <div id="text-recommendations" class="list"></div>
+        <div id="recommendations-container"></div>
       </div>
+
+      <div class="card">
+        <h3>Persona & Job Recommendations</h3>
+        <div class="card-header">
+          <button class="btn-clear" onclick="generatePersonaRecommendations()" title="Generate recommendations">💡</button>
+        </div>
+        <div id="persona-recommendations" class="list"></div>
+      </div>
+
+      <div class="card">
+        <h3>Extracted Text</h3>
+        <div id="extracted-text" class="list"></div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <h3>AI Insights</h3>
@@ -49,99 +75,39 @@
         </div>
         <div id="insights" class="list"></div>
       </div>
-      <div class="card">
-        <h3>Extracted Text</h3>
-        <div id="extracted-text" class="list"></div>
-      </div>
-      <div class="card">
-        <h3>Related Sections</h3>
-        <div id="related" class="list"></div>
-      </div>
+
     </div>
   </div>
-  
-  <!-- Notification container -->
+
   <div id="notification-container"></div>
-  
+
   <script>
+  /* -------------------- State / helpers -------------------- */
   const res = JSON.parse(sessionStorage.getItem('analysis_result') || '{}');
-  const sectionsEl = document.getElementById('sections');
   const extractedTextEl = document.getElementById('extracted-text');
-  const relatedEl = document.getElementById('related');
+  const personaRecommendationsEl = document.getElementById('persona-recommendations');
+  const textRecommendationsEl = document.getElementById('text-recommendations');
   const insightsEl = document.getElementById('insights');
 
-  function escapeForAttribute(s) {
-    return String(s || '')
-      .replace(/\\/g, '\\\\')
-      .replace(/'/g, "\\'")
-      .replace(/"/g, '\\"')
-      .replace(/\r?\n/g, ' ');
-  }
-
-  // --- Render UI ---
-  (res.extracted_sections || []).forEach(s => {
-    const safeTitle = escapeForAttribute(s.section_title || '');
-    const page = s.page_number || 1;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'section-item';
-    wrapper.innerHTML = `
-      <div class="section-header">
-        <span class="badge">#${s.importance_rank}</span> 
-        <b>${s.section_title}</b> 
-        <span class="muted">p.${page}</span>
-      </div>
-      <div class="section-actions">
-        <button class="btn-jump">Jump to Page</button>
-        <button class="btn-highlight">Highlight</button>
-      </div>
-    `;
-    wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
-    wrapper.querySelector('.btn-highlight').onclick = () => highlightSection(safeTitle, page);
-    sectionsEl.appendChild(wrapper);
-  });
-
-  (res.subsection_analysis || []).forEach(txt => {
-    const safeSnippet = escapeForAttribute(txt.refined_text || '');
-    const page = txt.page_number || 1;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'text-item';
-    wrapper.innerHTML = `
-      <div class="text-content">
-        <div class="text-header">
-          <b>${txt.document || ''}</b>
-          <span class="muted">p.${page}</span>
-        </div>
-        <div class="text-snippet">${txt.refined_text || ''}</div>
-      </div>
-      <div class="text-actions">
-        <button class="btn-jump">Jump to Page</button>
-        <button class="btn-highlight">Highlight</button>
-      </div>
-    `;
-    wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
-    wrapper.querySelector('.btn-highlight').onclick = () => highlightText(safeSnippet, page);
-    extractedTextEl.appendChild(wrapper);
-  });
-
-  (res.related_sections || []).forEach(group => {
-    const src = group.source || {};
-    const head = document.createElement('div');
-    head.innerHTML = `<div><b>${escapeForAttribute(src.section_title || '')}</b> <span class="muted">(p.${src.page_number || 1})</span></div>`;
-    relatedEl.appendChild(head);
-    (group.related || []).forEach(r => {
-      const item = document.createElement('div');
-      item.className = 'related-item';
-      item.textContent = `↳ ${r.section_title} (${r.document}, p.${r.page_number})`;
-      item.onclick = () => renderPDF('/uploads/' + r.document, r.page_number);
-      relatedEl.appendChild(item);
+    function waitForAdobeScript() {
+    return new Promise((resolve, reject) => {
+      if (typeof AdobeDC !== 'undefined') { adobeScriptReady = true; resolve(); return; }
+      let attempts = 0;
+      const intv = setInterval(() => {
+        attempts++;
+        if (typeof AdobeDC !== 'undefined') { adobeScriptReady = true; clearInterval(intv); resolve(); }
+        else if (attempts >= 100) { clearInterval(intv); reject(new Error('Adobe SDK not loaded')); }
+      }, 100);
     });
-  });
+  }
 
   let adobeDCView = null;
   let adobeScriptReady = false;
   let pdfLoaded = false;
-  let currentAnnotations = [];
   let adobeApis = null;
+  let adobeClientId = null;
+  let currentAnnotations = [];
+  let selectedText = "";
 
   function showNotification(message, type = 'info') {
     const container = document.getElementById('notification-container');
@@ -159,102 +125,237 @@
     `;
     notification.textContent = message;
     container.appendChild(notification);
-    setTimeout(() => {
-      notification.style.opacity = '0';
-      setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 300); }, 3000);
   }
 
-  function waitForAdobeScript() {
-    return new Promise((resolve, reject) => {
-      if (typeof AdobeDC !== 'undefined') {
-        adobeScriptReady = true;
-        resolve();
-        return;
-      }
-      let attempts = 0;
-      const interval = setInterval(() => {
-        attempts++;
-        if (typeof AdobeDC !== 'undefined') {
-          adobeScriptReady = true;
-          clearInterval(interval);
-          resolve();
-        } else if (attempts >= 100) {
-          clearInterval(interval);
-          reject(new Error('Adobe SDK not loaded'));
-        }
-      }, 100);
-    });
+  function escapeForAttribute(s) {
+    return String(s || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/"/g, '\\"')
+      .replace(/\r?\n/g, ' ');
   }
 
-  async function getAdobeAPIs() {
-    if (adobeApis) return adobeApis;
-    if (!adobeDCView) throw new Error('AdobeDCView not initialized');
-    if (typeof adobeDCView.getAPIsPromise === 'function') {
-      adobeApis = await adobeDCView.getAPIsPromise();
-    } else if (typeof adobeDCView.getAPIs === 'function') {
-      const maybe = adobeDCView.getAPIs();
-      adobeApis = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+  function updateAnnotationCount() {
+    const el = document.getElementById('annotation-count');
+    if (!el) return;
+    const c = currentAnnotations.length;
+    el.textContent = `${c} highlight${c !== 1 ? 's' : ''}`;
+    el.style.color = c > 0 ? '#4CAF50' : '#666';
+  }
+
+  async function loadAdobeConfig() {
+    try {
+      const r = await fetch('/api/config');
+      const data = await r.json();
+      adobeClientId = (data && data.adobe_api_key) || '';
+      if (!adobeClientId) console.warn('ADOBE_API not set on server .env');
+      return adobeClientId;
+    } catch (e) {
+      console.error('Failed to load /api/config', e);
+      return null;
     }
-    return adobeApis;
   }
 
-  function waitForPDFReady(timeout = 15000) {
-    return new Promise((resolve, reject) => {
-      const start = Date.now();
-      (function check() {
-        if (pdfLoaded && adobeApis) return resolve();
-        if (Date.now() - start > timeout) return reject(new Error('PDF not ready'));
-        setTimeout(check, 200);
-      })();
-    });
+  async function initAdobeView(fileUrl) {
+  const clientId = await loadAdobeConfig();
+  if (!clientId) {
+    showNotification("Adobe API Key missing!", "error");
+    return;
   }
+
+  await waitForAdobeScript(); // ✅ ensure SDK loaded
+
+  adobeDCView = new AdobeDC.View({
+    clientId: adobeClientId,
+    divId: "adobe-dc-view"   // ✅ now matches HTML
+  });
+
+  const fileId = 'doc_' + btoa(fileUrl).replace(/=/g, '')
+
+const previewFilePromise = adobeDCView.previewFile({
+  content: { location: { url: fileUrl } },
+  metaData: { fileName: "document.pdf", id: fileId }
+}, { enableFilePreviewEvents: true });
+
+previewFilePromise.then(adobeViewer => {
+  // Get APIs
+  adobeViewer.getAPIs().then(apis => {
+    adobeApis = apis;
+    pdfLoaded = true;
+    showNotification("Adobe APIs ready ✅", "success");
+  });
+});
+
+// Events → attach to adobeDCView, not adobeViewer
+// keep your existing EVENT_LISTENER setup
+adobeDCView.registerCallback(
+  AdobeDC.View.Enum.CallbackType.EVENT_LISTENER,
+  async (event) => {
+    if (!event || !event.type) return;
+
+    switch (event.type) {
+      case "DOCUMENT_OPEN":
+        try {
+          previewFilePromise.then(adobeViewer => {
+            adobeViewer.getAPIs().then(apis => {
+              adobeApis = apis;
+              pdfLoaded = true;
+              adobeScriptReady = true;
+              showNotification("Adobe APIs ready ✅", "success");
+            });
+          });
+        } catch (e) {
+          console.error("Adobe API init failed:", e);
+          showNotification("Adobe API init failed ❌", "error");
+        }
+        break;
+
+      case "PREVIEW_SELECTION_END":
+  try {
+    previewFilePromise.then(adobeViewer => {
+      adobeViewer.getAPIs().then(apis => {
+        apis.getSelectedContent()
+          .then(result => {
+            if (result && result.data && result.data.trim()) {
+              selectedText = result.data.trim();
+              updateSelectionUI();
+              showNotification("Text selected!", "success");
+            } else {
+              clearSelectedText();
+              showNotification("No text captured", "warning");
+            }
+          })
+          .catch(err => {
+            console.error("getSelectedContent() failed:", err);
+            showNotification("Failed to fetch selection", "error");
+          });
+      });
+    });
+  } catch (e) {
+    console.warn("Selection handler crashed:", e);
+  }
+  break;
+
+
+      case "PREVIEW_SELECTION_CLEAR":
+        clearSelectedText();
+        break;
+
+      default:
+        // Ignore events that don’t have data we need
+        console.debug("Adobe event:", event.type);
+        break;
+    }
+  },
+  {
+    enableFilePreviewEvents: true,
+    listenOn: ["DOCUMENT_OPEN", "PREVIEW_SELECTION_END", "PREVIEW_SELECTION_CLEAR"]
+  }
+);
+
+
+
+  }
+
+
 
   function makeDocumentId(url) {
     return 'doc_' + String(url || '').replace(/[^a-zA-Z0-9]/g, '_').slice(-50);
   }
 
-  function renderPDF(url, pageNum) {
-    const clientId = localStorage.getItem('adobe_embed_client_id') || 'YOUR_ADOBE_EMBED_CLIENT_ID';
-    if (clientId === 'YOUR_ADOBE_EMBED_CLIENT_ID') {
-      alert('Adobe API key not configured.');
-      return;
-    }
-    pdfLoaded = false;
-    adobeApis = null;
-    waitForAdobeScript().then(() => {
-      if (!adobeDCView) {
-        adobeDCView = new AdobeDC.View({ clientId, divId: 'pdf-viewer' });
-      }
-      adobeDCView.previewFile(
-        { content: { location: { url } }, metaData: { fileName: url.split('/').pop(), id: makeDocumentId(url) } },
-        { embedMode: 'SIZED_CONTAINER', enableAnnotationAPIs: true, enableSearchAPIs: true, includePDFAnnotations: true, showAnnotationTools: false }
-      ).then(() => {
-        adobeDCView.registerCallback(
-          AdobeDC.View.Enum.CallbackType.EVENT_LISTENER,
-          async (event) => {
-            if ((event && event.type) === 'APP_RENDERING_DONE') {
-              try {
-                await getAdobeAPIs();
-                pdfLoaded = true;
-                if (pageNum) adobeApis.gotoLocation(parseInt(pageNum, 10));
-              } catch (err) {
-                console.error('Error getting APIs:', err);
-              }
-            }
-          },
-          { enableFilePreviewEvents: true }
-        );
-      }).catch(err => showNotification('Failed to load PDF', 'error'));
-    }).catch(err => showNotification('Adobe SDK not ready', 'error'));
-  }
+  /* -------------------- Rendering / Adobe init -------------------- */
 
-  async function jumpToPage(page) {
+  /* -------------------- Actions that use Adobe APIs -------------------- */
+async function gotoSection(documentName, pageNumber) {
+  try {
+    const safeName = encodeURIComponent(documentName.trim());
+    const fileUrl = `${window.location.origin}/uploads/${safeName}`;
+
+    console.log("Rendering via Adobe SDK:", fileUrl, "Page:", pageNumber);
+
+    // Re-initialize AdobeDC View
+    const adobeDCView = new AdobeDC.View({
+      clientId: adobeClientId,
+      divId: "adobe-dc-view"
+    });
+
+    const previewFilePromise = adobeDCView.previewFile(
+      {
+        content: { location: { url: fileUrl } },
+        metaData: { fileName: documentName }
+      },
+      { enableFilePreviewEvents: true }
+    );
+
+    previewFilePromise.then(adobeViewer => {
+      adobeViewer.getAPIs().then(apis => {
+        adobeApis = apis;
+
+        // Jump to target page once APIs are ready
+        if (typeof adobeApis.gotoLocation === "function") {
+          adobeApis.gotoLocation(pageNumber)
+            .then(() => showNotification("Jumped to page " + pageNumber, "success"))
+            .catch(err => {
+              console.error("gotoLocation failed", err);
+              showNotification("Jump to page failed ❌", "error");
+            });
+        } else {
+          showNotification("gotoLocation API not available", "warning");
+        }
+      });
+    });
+  } catch (e) {
+    console.error("gotoSection failed:", e);
+    showNotification("Failed to jump to section ❌", "error");
+  }
+}
+
+
+// Attach buttons to recommendation cards
+function renderTextRecommendations(recommendations) {
+  const container = document.getElementById("recommendations-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  recommendations.forEach(rec => {
+    const card = document.createElement("div");
+    card.className = "recommendation-card";
+    card.innerHTML = `
+      <h4>${rec.section_title} (p.${rec.page_number})</h4>
+      <p>${rec.content_preview}</p>
+      <button class="jump-btn">Jump to Section</button>
+    `;
+
+    const btn = card.querySelector(".jump-btn");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        // use rec.document safely
+        gotoSection(rec.document, rec.page_number);
+      });
+    }
+
+    container.appendChild(card);
+  });
+}
+
+
+
+
+
+  async function searchAndHighlight(searchText, pageNum) {
     try {
-      await waitForPDFReady();
-      (await getAdobeAPIs()).gotoLocation(parseInt(page, 10));
-    } catch (err) {
-      showNotification('Cannot jump to page', 'error');
+      const apis = await getAdobeAPIs();
+      const results = await apis.search(searchText);
+      const pageResults = results.filter(r => r.pageIndex === (pageNum - 1));
+      if (pageResults.length) {
+        await addHighlightAnnotation(pageResults[0], searchText);
+      } else {
+        showNotification('No results found', 'warning');
+      }
+    } catch (e) {
+      console.error('Search failed:', e);
+      showNotification('Search failed', 'error');
     }
   }
 
@@ -263,9 +364,7 @@
       await waitForPDFReady();
       await jumpToPage(pageNum);
       setTimeout(() => searchAndHighlight(sectionTitle, pageNum), 600);
-    } catch {
-      showNotification('PDF not ready', 'warning');
-    }
+    } catch { showNotification('PDF not ready', 'warning'); }
   }
 
   async function highlightText(text, pageNum) {
@@ -273,23 +372,7 @@
       await waitForPDFReady();
       await jumpToPage(pageNum);
       setTimeout(() => searchAndHighlight(text, pageNum), 600);
-    } catch {
-      showNotification('PDF not ready', 'warning');
-    }
-  }
-
-  async function searchAndHighlight(searchText, pageNum) {
-    try {
-      const results = await (await getAdobeAPIs()).search(searchText);
-      const pageResults = results.filter(r => r.pageIndex === (pageNum - 1));
-      if (pageResults.length) {
-        await addHighlightAnnotation(pageResults[0], searchText);
-      } else {
-        showNotification('No results found', 'warning');
-      }
-    } catch {
-      showNotification('Search failed', 'error');
-    }
+    } catch { showNotification('PDF not ready', 'warning'); }
   }
 
   async function addHighlightAnnotation(searchResult, searchText) {
@@ -305,9 +388,7 @@
       currentAnnotations.push(searchResult);
       updateAnnotationCount();
       showNotification('Highlight added', 'success');
-    } catch {
-      showNotification('Failed to add highlight', 'error');
-    }
+    } catch { showNotification('Failed to add highlight', 'error'); }
   }
 
   async function clearAllAnnotations() {
@@ -317,41 +398,220 @@
       currentAnnotations = [];
       updateAnnotationCount();
       showNotification('All highlights cleared', 'success');
-    } catch {
-      showNotification('Failed to clear highlights', 'error');
+    } catch { showNotification('Failed to clear highlights', 'error'); }
+  }
+
+  /* -------------------- Selection helpers -------------------- */
+  function updateSelectionUI() {
+    const selectedTextInfo = document.getElementById('selected-text-info');
+    const btnTextRecommendations = document.getElementById('btn-text-recommendations');
+    if (selectedText && selectedText.trim()) {
+      if (selectedTextInfo) {
+        selectedTextInfo.textContent = `Selected: "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`;
+        selectedTextInfo.style.color = '#4CAF50';
+        selectedTextInfo.classList.add('has-selection');
+      }
+      if (btnTextRecommendations) btnTextRecommendations.disabled = false;
+    } else {
+      if (selectedTextInfo) {
+        selectedTextInfo.textContent = 'No text selected';
+        selectedTextInfo.style.color = '#666';
+        selectedTextInfo.classList.remove('has-selection');
+      }
+      if (btnTextRecommendations) btnTextRecommendations.disabled = true;
     }
   }
 
-  function updateAnnotationCount() {
-    const el = document.getElementById('annotation-count');
-    if (!el) return;
-    const c = currentAnnotations.length;
-    el.textContent = `${c} highlight${c !== 1 ? 's' : ''}`;
-    el.style.color = c > 0 ? '#4CAF50' : '#666';
+  function clearSelectedText() {
+    selectedText = "";
+    updateSelectionUI();
+    if (textRecommendationsEl) {
+      textRecommendationsEl.innerHTML = '<div class="muted">No text selected for recommendations</div>';
+    }
   }
 
-  if (res.file_url) {
-    setTimeout(() => renderPDF(res.file_url), 500);
+  async function manualCheckSelection() {
+    try {
+      await initAdobeView();
+      const selectedContent = await (await getAdobeAPIs()).getSelectedContent();
+      if (selectedContent && selectedContent.text && selectedContent.text.trim()) {
+        selectedText = selectedContent.text.trim();
+        updateSelectionUI();
+        showNotification('Selection captured', 'success');
+      } else {
+        clearSelectedText();
+        showNotification('No text currently selected', 'info');
+      }
+    } catch (e) {
+      console.error(e);
+      showNotification('Failed to check selection', 'error');
+    }
   }
-  updateAnnotationCount();
 
-  // --- Insights / Mic buttons ---
-  const btnInsights = document.getElementById('btn-insights');
-  const btnMic = document.getElementById('btn-mic');
-  if (btnInsights) btnInsights.onclick = () => generateInsights();
-  if (btnMic) btnMic.onclick = () => generatePodcast();
+  // simple status helpers for debugging
+  function checkAdobeAPIsStatus() {
+    const status = {
+      adobeScriptReady,
+      pdfLoaded,
+      adobeApis: !!adobeApis,
+      selectedText: selectedText ? selectedText.substring(0, 50) + '...' : 'None'
+    };
+    let message = 'Adobe APIs Status:\n';
+    message += `• Adobe Script: ${status.adobeScriptReady ? '✅ Ready' : '❌ Not Ready'}\n`;
+    message += `• PDF Loaded: ${status.pdfLoaded ? '✅ Yes' : '❌ No'}\n`;
+    message += `• Adobe APIs: ${status.adobeApis ? '✅ Available' : '❌ Not Available'}\n`;
+    message += `• Selected Text: ${status.selectedText}`;
+    alert(message);
+    return status;
+  }
+  async function retryGetAdobeAPIs() {
+    if (adobeApis) { showNotification('Adobe APIs already available', 'info'); return adobeApis; }
+    showNotification('Please wait for VIEWER_READY to initialize APIs', 'info');
+    return null;
+  }
+  async function testAdobeAPIs() {
+    if (!adobeApis) { showNotification('APIs not ready', 'warning'); return false; }
+    try {
+      if (typeof adobeApis.getCurrentPage === 'function') {
+        const pg = await adobeApis.getCurrentPage();
+        console.log('Current page:', pg);
+        showNotification('Adobe APIs OK', 'success');
+        return true;
+      }
+      showNotification('Limited APIs available', 'warning');
+      return false;
+    } catch (e) {
+      showNotification('APIs test failed', 'error');
+      return false;
+    }
+  }
+
+  /* -------------------- Recommendations / Insights / Podcast -------------------- */
+  function renderPersonaRecommendations(relatedSections) {
+    if (!personaRecommendationsEl) return;
+    personaRecommendationsEl.innerHTML = '';
+    if (!relatedSections.length) {
+      personaRecommendationsEl.innerHTML = '<div class="muted">No related sections found</div>';
+      return;
+    }
+    relatedSections.forEach(group => {
+      const src = group.source || {};
+      const head = document.createElement('div');
+      head.innerHTML = `<div><b>${escapeForAttribute(src.section_title || '')}</b> <span class="muted">(p.${src.page_number || 1})</span></div>`;
+      personaRecommendationsEl.appendChild(head);
+      (group.related || []).forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'related-item';
+        item.textContent = `↳ ${r.section_title} (${r.document}, p.${r.page_number})`;
+        item.onclick = () => renderPDF('/uploads/' + r.document, r.page_number);
+        personaRecommendationsEl.appendChild(item);
+      });
+    });
+  }
+
+function renderTextRecommendations(recs) {
+  const container = document.getElementById("recommendations-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  recs.forEach((rec, idx) => {
+    const card = document.createElement("div");
+    card.className = "recommendation-card";
+
+    const title = document.createElement("h3");
+    title.textContent = `#${idx + 1} ${rec.section_title}`;
+
+    const meta = document.createElement("p");
+    meta.innerHTML = `<em>${rec.document} (p.${rec.page_number})</em>`;
+
+    const preview = document.createElement("p");
+    preview.textContent = rec.content_preview;
+
+    const sim = document.createElement("small");
+    sim.textContent = `Similarity: ${(rec.similarity * 100).toFixed(1)}%`;
+
+    const btn = document.createElement("button");
+    btn.textContent = "Jump to Section";
+    btn.addEventListener("click", () => gotoSection(rec.document, rec.page_number));
+
+    card.append(title, meta, preview, sim, btn);
+    container.appendChild(card);
+  });
+}
+
+
+
+  async function generatePersonaRecommendations() {
+    try {
+      if (!res || !res.file_url) { showNotification('No document context', 'warning'); return; }
+      showNotification('Generating persona recommendations...', 'info');
+
+      const filename = (res.file_url.split('/').pop()) || '';
+      const form = new FormData();
+      form.append('filename', filename);
+      form.append('text', '');
+      if (res && res.metadata) {
+        form.append('persona', res.metadata.persona || '');
+        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+      }
+      const r = await fetch('/api/analyze', { method: 'POST', body: form });
+      if (!r.ok) throw new Error('Failed');
+      const data = await r.json();
+      renderPersonaRecommendations(data.related_sections || []);
+      showNotification('Persona recommendations ready', 'success');
+    } catch (e) {
+      console.error(e);
+      showNotification('Failed to generate persona recommendations', 'error');
+    }
+  }
+
+async function generateTextRecommendations() {
+  try {
+    if (!selectedText) {
+      const t = prompt('Enter text to analyze:');
+      if (!t || !t.trim()) { 
+        showNotification('No text provided', 'warning'); 
+        return; 
+      }
+      selectedText = t.trim();
+      updateSelectionUI();
+    }
+
+    console.log("👉 Sending to backend:", selectedText);
+
+    showNotification('Generating text recommendations...', 'info');
+    textRecommendationsEl.innerHTML = '<div class="muted">Loading...</div>'; // clear old
+
+    const form = new FormData();
+    form.append('selected_text', selectedText);
+    if (res && res.metadata) {
+      form.append('persona', res.metadata.persona || '');
+      form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+    }
+
+    const r = await fetch('/api/recommendations', { method: 'POST', body: form });
+    if (!r.ok) throw new Error(await r.text());
+
+    const data = await r.json();
+    console.log("👉 Backend returned:", data);
+
+    renderTextRecommendations(data.recommendations || []);
+    showNotification('Text recommendations ready', 'success');
+  } catch (e) {
+    console.error(e);
+    showNotification('Failed to generate text recommendations', 'error');
+  }
+}
+
 
   async function generateInsights() {
     try {
-      if (!res || !res.file_url) {
-        showNotification('No document context', 'warning');
-        return;
-      }
+      if (!res || !res.file_url) { showNotification('No document context', 'warning'); return; }
       showNotification('Generating insights...', 'info');
       const filename = (res.file_url.split('/').pop()) || '';
       const form = new FormData();
       form.append('filename', filename);
-      // Optional persona context if present
+      form.append('text', '');
       if (res && res.metadata) {
         form.append('persona', res.metadata.persona || '');
         form.append('job_to_be_done', res.metadata.job_to_be_done || '');
@@ -361,9 +621,7 @@
       const data = await r.json();
       renderInsights(data);
       showNotification('Insights ready', 'success');
-    } catch (e) {
-      showNotification('Failed to generate insights', 'error');
-    }
+    } catch (e) { showNotification('Failed to generate insights', 'error'); }
   }
 
   async function generatePodcast() {
@@ -373,6 +631,7 @@
       const filename = (res.file_url.split('/').pop()) || '';
       const form = new FormData();
       form.append('filename', filename);
+      form.append('text', '');
       if (res && res.metadata) {
         form.append('persona', res.metadata.persona || '');
         form.append('job_to_be_done', res.metadata.job_to_be_done || '');
@@ -380,40 +639,24 @@
       const r = await fetch('/api/podcast', { method: 'POST', body: form });
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
-      // If insights are included, render them too so podcast works standalone
       if (data && data.insights) renderInsights(data.insights);
       renderPodcast(data);
       showNotification('Podcast ready', 'success');
-    } catch (e) {
-      console.error(e);
-      showNotification('Failed to create podcast', 'error');
-    }
+    } catch (e) { console.error(e); showNotification('Failed to create podcast', 'error'); }
   }
 
   function renderPodcast(data) {
     if (!data || !data.audio_url) return;
     const container = document.createElement('div');
     container.className = 'card';
-    const title = document.createElement('h3');
-    title.textContent = 'Podcast';
-    const audio = document.createElement('audio');
-    audio.controls = true;
-    audio.src = data.audio_url;
-    audio.style.width = '100%';
+    const title = document.createElement('h3'); title.textContent = 'Podcast';
+    const audio = document.createElement('audio'); audio.controls = true; audio.src = data.audio_url; audio.style.width = '100%';
     const scriptEl = document.createElement('details');
-    const sum = document.createElement('summary');
-    sum.textContent = 'Show script';
-    const pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.textContent = data.script || '';
-    scriptEl.appendChild(sum);
-    scriptEl.appendChild(pre);
-    container.appendChild(title);
-    container.appendChild(audio);
-    container.appendChild(scriptEl);
-    // Insert at top of sidebar
-    const side = document.querySelector('.side');
-    side && side.insertBefore(container, side.firstChild);
+    const sum = document.createElement('summary'); sum.textContent = 'Show script';
+    const pre = document.createElement('pre'); pre.style.whiteSpace = 'pre-wrap'; pre.textContent = data.script || '';
+    scriptEl.appendChild(sum); scriptEl.appendChild(pre);
+    container.appendChild(title); container.appendChild(audio); container.appendChild(scriptEl);
+    const side = document.querySelector('.side'); side && side.insertBefore(container, side.firstChild);
     try { audio.play().catch(()=>{}); } catch {}
   }
 
@@ -428,31 +671,108 @@
     ];
     groups.forEach(g => {
       const items = data && Array.isArray(data[g.key]) ? data[g.key] : [];
-      const wrap = document.createElement('div');
-      wrap.className = 'insight-group';
-      const h = document.createElement('div');
-      h.className = 'insight-title';
-      h.textContent = g.title;
-      wrap.appendChild(h);
-      const ul = document.createElement('ul');
-      ul.className = 'insight-list';
-      items.forEach(t => {
-        const li = document.createElement('li');
-        li.textContent = String(t);
-        ul.appendChild(li);
-      });
-      if (!items.length) {
-        const li = document.createElement('div');
-        li.className = 'muted';
-        li.textContent = 'No items';
-        wrap.appendChild(li);
-      } else {
-        wrap.appendChild(ul);
-      }
+      const wrap = document.createElement('div'); wrap.className = 'insight-group';
+      const h = document.createElement('div'); h.className = 'insight-title'; h.textContent = g.title; wrap.appendChild(h);
+      const ul = document.createElement('ul'); ul.className = 'insight-list';
+      items.forEach(t => { const li = document.createElement('li'); li.textContent = String(t); ul.appendChild(li); });
+      if (!items.length) { const li = document.createElement('div'); li.className = 'muted'; li.textContent = 'No items'; wrap.appendChild(li); }
+      else { wrap.appendChild(ul); }
       insightsEl.appendChild(wrap);
     });
   }
-</script>
 
+  async function generateInsightsForSelectedText() {
+    if (!selectedText) { showNotification('No text selected for insights', 'warning'); return; }
+    try {
+      showNotification('Generating insights for selected text...', 'info');
+      const filename = (res.file_url.split('/').pop()) || '';
+      const form = new FormData();
+      form.append('filename', filename);
+      form.append('text', selectedText);
+      if (res && res.metadata) {
+        form.append('persona', res.metadata.persona || '');
+        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+      }
+      const r = await fetch('/api/insights', { method: 'POST', body: form });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      renderInsights(data);
+      showNotification('Insights ready for selected text', 'success');
+    } catch (e) { console.error(e); showNotification('Failed to generate insights', 'error'); }
+  }
+
+  async function generatePodcastForSelectedText() {
+    if (!selectedText) { showNotification('No text selected for podcast', 'warning'); return; }
+    try {
+      showNotification('Creating podcast for selected text...', 'info');
+      const filename = (res.file_url.split('/').pop()) || '';
+      const form = new FormData();
+      form.append('filename', filename);
+      form.append('text', selectedText);
+      if (res && res.metadata) {
+        form.append('persona', res.metadata.persona || '');
+        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+      }
+      const r = await fetch('/api/podcast', { method: 'POST', body: form });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      if (data && data.insights) renderInsights(data.insights);
+      renderPodcast(data);
+      showNotification('Podcast ready for selected text', 'success');
+    } catch (e) { console.error(e); showNotification('Failed to create podcast', 'error'); }
+  }
+
+  function manualInputText() {
+    const t = prompt('Enter the text you want to analyze:');
+    if (t && t.trim()) { selectedText = t.trim(); updateSelectionUI(); showNotification('Text set manually', 'info'); }
+    else { showNotification('No text entered', 'warning'); }
+  }
+
+  /* -------------------- Bootstrapping -------------------- */
+  // Render extracted text list with jump/highlight buttons
+  (res.subsection_analysis || []).forEach(txt => {
+    const safeSnippet = escapeForAttribute(txt.refined_text || '');
+    const page = txt.page_number || 1;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'text-item';
+    wrapper.innerHTML = `
+      <div class="text-content">
+        <div class="text-header"><b>${txt.document || ''}</b> <span class="muted">p.${page}</span></div>
+        <div class="text-snippet">${txt.refined_text || ''}</div>
+      </div>
+      <div class="text-actions">
+        <button class="btn-jump">Jump to Page</button>
+        <button class="btn-highlight">Highlight</button>
+      </div>
+    `;
+    wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
+    wrapper.querySelector('.btn-highlight').onclick = () => highlightText(safeSnippet, page);
+    extractedTextEl.appendChild(wrapper);
+  });
+
+  // Background processing (cache embeddings etc.)
+  setTimeout(() => {
+    fetch('/api/background-process', { method: 'POST' })
+      .then(r => r.json())
+      .then(d => d.status === 'success' && showNotification('Background processing completed', 'success'))
+      .catch(() => showNotification('Background processing failed', 'warning'));
+  }, 1500);
+
+  // Insight/Podcast toolbar
+  document.getElementById('btn-insights').onclick = () => generateInsights();
+  document.getElementById('btn-mic').onclick = () => generatePodcast();
+
+  // Global click: clear selection when clicking outside controls
+  document.addEventListener('dblclick', (e) => {
+    clearSelectedText();
+  });
+// Initial render using Adobe Embed API
+document.addEventListener("DOMContentLoaded", () => {
+  if (res.file_url) {
+    initAdobeView(res.file_url);
+  }
+  updateAnnotationCount();
+});
+  </script>
 </body>
 </html>
