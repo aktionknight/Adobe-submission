@@ -55,6 +55,7 @@ UPLOADS_DIR = os.path.join(INTERFACE_DIR, 'uploads')
 UPLOADS_VO_DIR = os.path.join(UPLOADS_DIR, 'VO')
 FRONTEND_DIR = os.path.join(INTERFACE_DIR, 'frontend')
 
+
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_VO_DIR, exist_ok=True)
 os.makedirs(FRONTEND_DIR, exist_ok=True)
@@ -116,15 +117,22 @@ class AnalysisCache:
         all_sections = []
         for cached_data in self._cache.values():
             sections = cached_data.get("sections", [])
+            file_path = cached_data.get("file_path", "")
+
+            # Use actual filename from uploads directory
+            file_name = os.path.basename(file_path) if file_path else "Unknown.pdf"
+
             for section in sections:
                 all_sections.append({
-                    "document": cached_data.get("title", "Unknown"),
+                    "document": file_name,   # 👈 real file name, safe to map to /uploads/
                     "title": section["title"],
                     "content": section["content"],
                     "page": section["page"],
-                    "file_path": cached_data.get("file_path", "")
+                    "file_path": file_path,
+                    "pdf_title": cached_data.get("title", file_name)  # optional: keep extracted title
                 })
         return all_sections
+
 
 
 analysis_cache = AnalysisCache()
@@ -135,21 +143,34 @@ def process_all_pdfs_background():
     """Process all uploaded PDFs in the background to cache their sections"""
     if analysis_cache.is_background_processed():
         return
-    
+
     try:
         for fname in os.listdir(UPLOADS_DIR):
             if not fname.lower().endswith('.pdf'):
                 continue
             pdf_path = os.path.join(UPLOADS_DIR, fname)
-            if not analysis_cache.get(pdf_path):
-                title, headings = extract_1a_data(pdf_path)
-                sections = extract_section_content(pdf_path, headings)
-                analysis_cache.set(pdf_path, {
-                    "title": title,
-                    "headings": headings,
-                    "sections": sections,
-                    "file_path": pdf_path
-                })
+            safe_name = os.path.basename(fname)
+            encoded_name = quote(safe_name)
+            pdf_title, headings = extract_1a_data(pdf_path)
+            sections_raw = extract_section_content(pdf_path, headings)
+            # PATCH: ensure each section carries safe filename and file_url
+            sections = []
+            for s in sections_raw:
+                section = {
+                    "title": s["title"],
+                    "content": s["content"],
+                    "page": s["page"],
+                    "document": safe_name,  # actual filename
+                    "file_url": f"/uploads/{encoded_name}",  # usable in frontend
+                    "display_name": pdf_title  # optional pretty title
+                }
+                sections.append(section)
+            analysis_cache.set(pdf_path, {
+                "title": pdf_title,
+                "headings": headings,
+                "sections": sections,
+                "file_path": pdf_path
+            })
         analysis_cache.set_background_processed(True)
     except Exception as e:
         print(f"Background processing failed: {e}")
@@ -196,24 +217,33 @@ def get_recommendations_for_text(
     # Rank results
     ranked_sections = []
     for section, similarity in zip(all_sections, similarities):
-        # 👇 only preview the content of that specific section
         preview = section["content"].strip()
-        if len(preview) > 300:  # limit preview length
+        if len(preview) > 300:
             preview = preview[:300] + "..."
-        
+        # Use actual filename for file_url
+        safe_name = section.get("document", "")
         ranked_sections.append({
-            "document": section["document"],
+            "document": safe_name,
+            "file_url": f"/uploads/{quote(safe_name)}",
             "section_title": section["title"],
             "page_number": section["page"],
             "similarity": float(similarity),
             "content_preview": preview
-        })
+})
 
     ranked_sections.sort(key=lambda x: x["similarity"], reverse=True)
+    top_recommendations = ranked_sections[:top_k]
+
+    for rec in top_recommendations:
+        if "document" in rec:
+            safe_name = rec["document"]
+            rec["file_url"] = f"/uploads/{quote(safe_name)}"
+
     return {
-        "recommendations": ranked_sections[:top_k],
-        "query_text": query_text,
+        "recommendations": top_recommendations,
+        "query_text": selected_text,
         "total_sections_analyzed": len(all_sections)
+
     }
 
 
@@ -557,7 +587,7 @@ async def insights(
                 "You are an analytical assistant. Given selected text and document excerpts, "
                 "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
                 "Focus your analysis on the selected text and how it relates to the broader document context. "
-                "For contradictions_or_counterpoints, look for factual inconsistencies, different interpretations, or alternative perspectives, "
+                "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
                 "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
                 "For each claim, suggest an alternate interpretation or scenario where it may not be true."
             )
@@ -571,7 +601,7 @@ async def insights(
             system_instructions = (
                 "You are an analytical assistant. Given document excerpts and optional cross-document context, "
                 "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-                "For contradictions_or_counterpoints, look for factual inconsistencies, different interpretations, or alternative perspectives, "
+                "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
                 "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
                 "For each claim, suggest an alternate interpretation or scenario where it may not be true."
             )
@@ -850,17 +880,26 @@ async def upload(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
         if not f.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail=f"Only PDF files are supported: {f.filename}")
         
-        # Save with original filename
+        # Save with original filename (safe for FS)
         dest = os.path.join(UPLOADS_DIR, os.path.basename(f.filename))
         content = await f.read()
         with open(dest, 'wb') as out:
             out.write(content)
 
-        # Encode spaces & special chars for safe URL use
-        encoded_name = quote(os.path.basename(dest))
+        safe_name = os.path.basename(dest)   # keep actual filename
+        encoded_name = quote(safe_name)      # safe for URL
+
+        # --- IMPORTANT: store mapping for analysis later ---
+        analysis_cache.register_document(
+            safe_name=safe_name,
+            file_url=f"/uploads/{encoded_name}",
+            display_name=f.filename
+        )
+
         saved.append(f"/uploads/{encoded_name}")
     
     return {"saved": saved}
+
 
 
 @app.get("/api/documents")
@@ -922,9 +961,9 @@ async def get_recommendations(
         recommendations = result.get("recommendations", [])
         for rec in recommendations:
             if "document" in rec:
-                # Assume document holds the filename (relative)
-                safe_name = quote(rec["document"])
-                rec["file_url"] = f"/uploads/{safe_name}"
+                # rec["document"] should be the actual filename as saved in uploads
+                safe_name = rec["document"]
+                rec["file_url"] = f"/uploads/{quote(safe_name)}"
 
         return JSONResponse(result)
     except HTTPException:

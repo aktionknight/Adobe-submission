@@ -44,6 +44,7 @@
             <button class="btn-clear" onclick="testAdobeAPIs()" title="Test Adobe APIs" id="btn-test-apis">🧪</button>
             <button class="btn-clear" onclick="checkAdobeAPIsStatus()" title="Check Adobe APIs status" id="btn-status">📊</button>
             <button class="btn-clear" onclick="generateTextRecommendations()" title="Generate recommendations" id="btn-text-recommendations" disabled>💡</button>
+            <button class="btn-clear" onclick="generateSelectionInsights()" title="Generate insights" id = "btn-text-insights"disabled>💡</button>
           </div>
         </div>
         <div class="help-text">
@@ -61,16 +62,12 @@
         <div id="persona-recommendations" class="list"></div>
       </div>
 
-      <div class="card">
-        <h3>Extracted Text</h3>
-        <div id="extracted-text" class="list"></div>
-      </div>
 
       <div class="card">
         <div class="card-header">
           <h3>AI Insights</h3>
           <div class="annotation-count-container">
-            <button class="btn-clear" onclick="generateInsights()" title="Generate insights">💡</button>
+            
           </div>
         </div>
         <div id="insights" class="list"></div>
@@ -267,44 +264,56 @@ adobeDCView.registerCallback(
   /* -------------------- Rendering / Adobe init -------------------- */
 
   /* -------------------- Actions that use Adobe APIs -------------------- */
-async function gotoSection(documentName, pageNumber) {
+let currentPdfUrl = null;  // track currently rendered PDF
+
+async function gotoSection(fileUrl, pageNumber) {
   try {
-    const safeName = encodeURIComponent(documentName.trim());
-    const fileUrl = `${window.location.origin}/uploads/${safeName}`;
+    // Ensure absolute URL (fileUrl is root-relative like "/uploads/xyz.pdf")
+    const absUrl = window.location.origin + fileUrl;
 
-    console.log("Rendering via Adobe SDK:", fileUrl, "Page:", pageNumber);
+    // Case 1: Same PDF already loaded → just jump
+    if (currentPdfUrl === absUrl && adobeApis) {
+      if (typeof adobeApis.gotoLocation === "function") {
+        await adobeApis.gotoLocation(pageNumber);
+        showNotification("Jumped to page " + pageNumber, "success");
+      } else {
+        showNotification("gotoLocation API not available", "warning");
+      }
+      return;
+    }
 
-    // Re-initialize AdobeDC View
-    const adobeDCView = new AdobeDC.View({
-      clientId: adobeClientId,
-      divId: "adobe-dc-view"
-    });
+    // Case 2: Different PDF → verify it exists before loading
+    const headResp = await fetch(absUrl, { method: "HEAD" });
+    if (!headResp.ok) {
+      showNotification("PDF file not found: " + absUrl, "error");
+      return;
+    }
 
-    const previewFilePromise = adobeDCView.previewFile(
-      {
-        content: { location: { url: fileUrl } },
-        metaData: { fileName: documentName }
-      },
-      { enableFilePreviewEvents: true }
-    );
+    // Load new PDF
+    pdfLoaded = false;
+    adobeApis = null;
+    await initAdobeView(absUrl);
+    currentPdfUrl = absUrl; // update tracker
 
-    previewFilePromise.then(adobeViewer => {
-      adobeViewer.getAPIs().then(apis => {
-        adobeApis = apis;
+    // Wait until PDF is loaded and APIs are ready
+    let attempts = 0;
+    while ((!pdfLoaded || !adobeApis) && attempts < 50) {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      attempts++;
+    }
 
-        // Jump to target page once APIs are ready
-        if (typeof adobeApis.gotoLocation === "function") {
-          adobeApis.gotoLocation(pageNumber)
-            .then(() => showNotification("Jumped to page " + pageNumber, "success"))
-            .catch(err => {
-              console.error("gotoLocation failed", err);
-              showNotification("Jump to page failed ❌", "error");
-            });
-        } else {
-          showNotification("gotoLocation API not available", "warning");
-        }
-      });
-    });
+    if (!pdfLoaded || !adobeApis) {
+      showNotification("PDF not loaded yet. Please wait...", "warning");
+      return;
+    }
+
+    // Jump after loading
+    if (typeof adobeApis.gotoLocation === "function") {
+      await adobeApis.gotoLocation(pageNumber);
+      showNotification("Jumped to page " + pageNumber, "success");
+    } else {
+      showNotification("gotoLocation API not available", "warning");
+    }
   } catch (e) {
     console.error("gotoSection failed:", e);
     showNotification("Failed to jump to section ❌", "error");
@@ -312,38 +321,7 @@ async function gotoSection(documentName, pageNumber) {
 }
 
 
-// Attach buttons to recommendation cards
-function renderTextRecommendations(recommendations) {
-  const container = document.getElementById("recommendations-container");
-  if (!container) return;
-  container.innerHTML = "";
-
-  recommendations.forEach(rec => {
-    const card = document.createElement("div");
-    card.className = "recommendation-card";
-    card.innerHTML = `
-      <h4>${rec.section_title} (p.${rec.page_number})</h4>
-      <p>${rec.content_preview}</p>
-      <button class="jump-btn">Jump to Section</button>
-    `;
-
-    const btn = card.querySelector(".jump-btn");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        // use rec.document safely
-        gotoSection(rec.document, rec.page_number);
-      });
-    }
-
-    container.appendChild(card);
-  });
-}
-
-
-
-
-
-  async function searchAndHighlight(searchText, pageNum) {
+async function searchAndHighlight(searchText, pageNum) {
     try {
       const apis = await getAdobeAPIs();
       const results = await apis.search(searchText);
@@ -405,6 +383,7 @@ function renderTextRecommendations(recommendations) {
   function updateSelectionUI() {
     const selectedTextInfo = document.getElementById('selected-text-info');
     const btnTextRecommendations = document.getElementById('btn-text-recommendations');
+    const btnTextInsights = document.getElementById('btn-text-insights');
     if (selectedText && selectedText.trim()) {
       if (selectedTextInfo) {
         selectedTextInfo.textContent = `Selected: "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`;
@@ -412,6 +391,7 @@ function renderTextRecommendations(recommendations) {
         selectedTextInfo.classList.add('has-selection');
       }
       if (btnTextRecommendations) btnTextRecommendations.disabled = false;
+      if (btnTextInsights) btnTextInsights.disabled = false;
     } else {
       if (selectedTextInfo) {
         selectedTextInfo.textContent = 'No text selected';
@@ -419,6 +399,7 @@ function renderTextRecommendations(recommendations) {
         selectedTextInfo.classList.remove('has-selection');
       }
       if (btnTextRecommendations) btnTextRecommendations.disabled = true;
+      if (btnTextInsights) btnTextInsights.disabled = true;
     }
   }
 
@@ -532,7 +513,9 @@ function renderTextRecommendations(recs) {
 
     const btn = document.createElement("button");
     btn.textContent = "Jump to Section";
-    btn.addEventListener("click", () => gotoSection(rec.document, rec.page_number));
+btn.addEventListener("click", () => {
+  gotoSection(rec.file_url, rec.page_number);
+});
 
     card.append(title, meta, preview, sim, btn);
     container.appendChild(card);
@@ -604,25 +587,46 @@ async function generateTextRecommendations() {
 }
 
 
-  async function generateInsights() {
-    try {
-      if (!res || !res.file_url) { showNotification('No document context', 'warning'); return; }
-      showNotification('Generating insights...', 'info');
-      const filename = (res.file_url.split('/').pop()) || '';
-      const form = new FormData();
-      form.append('filename', filename);
-      form.append('text', '');
-      if (res && res.metadata) {
-        form.append('persona', res.metadata.persona || '');
-        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+  async function generateInsightsPersona() {
+  try {
+    if (!res || !res.file_url) { 
+      showNotification('No document context', 'warning'); 
+      return; 
+    }
+
+    showNotification('Generating insights...', 'info');
+    const filename = (res.file_url.split('/').pop()) || '';
+
+    const form = new FormData();
+    form.append('filename', filename);
+
+    // Decide what text to send:
+    let textToAnalyze = "";
+    if (res && res.metadata && (res.metadata.persona || res.metadata.job_to_be_done)) {
+      // Use persona & job_to_be_done context
+      form.append('persona', res.metadata.persona || '');
+      form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+    } else {
+      // Fall back to selected text
+      if (selectedText && selectedText.trim()) {
+        textToAnalyze = selectedText.trim();
       }
-      const r = await fetch('/api/insights', { method: 'POST', body: form });
-      if (!r.ok) throw new Error('Failed');
-      const data = await r.json();
-      renderInsights(data);
-      showNotification('Insights ready', 'success');
-    } catch (e) { showNotification('Failed to generate insights', 'error'); }
+    }
+
+    form.append('text', textToAnalyze);
+
+    const r = await fetch('/api/insights', { method: 'POST', body: form });
+    if (!r.ok) throw new Error('Failed');
+    const data = await r.json();
+
+    renderInsights(data);
+    showNotification('Insights ready', 'success');
+  } catch (e) {
+    console.error(e);
+    showNotification('Failed to generate insights', 'error');
   }
+}
+
 
   async function generatePodcast() {
     try {
@@ -680,6 +684,39 @@ async function generateTextRecommendations() {
       insightsEl.appendChild(wrap);
     });
   }
+  
+  async function generateSelectionInsights() {
+  try {
+    if (!res || !res.file_url) { 
+      showNotification('No document context', 'warning'); 
+      return; 
+    }
+    if (!selectedText || !selectedText.trim()) {
+      showNotification('No text selected', 'warning');
+      return;
+    }
+
+    showNotification('Generating insights from selection...', 'info');
+
+    const filename = (res.file_url.split('/').pop()) || '';
+    const form = new FormData();
+    form.append('filename', filename);
+    form.append('text', selectedText.trim());
+    form.append('persona', '');          // explicitly empty
+    form.append('job_to_be_done', '');   // explicitly empty
+
+    const r = await fetch('/api/insights', { method: 'POST', body: form });
+    if (!r.ok) throw new Error('Failed');
+    const data = await r.json();
+
+    renderInsights(data);
+    showNotification('Selection insights ready ✅', 'success');
+  } catch (e) {
+    console.error(e);
+    showNotification('Failed to generate insights ❌', 'error');
+  }
+}
+
 
   async function generateInsightsForSelectedText() {
     if (!selectedText) { showNotification('No text selected for insights', 'warning'); return; }
@@ -747,7 +784,7 @@ async function generateTextRecommendations() {
     `;
     wrapper.querySelector('.btn-jump').onclick = () => jumpToPage(page);
     wrapper.querySelector('.btn-highlight').onclick = () => highlightText(safeSnippet, page);
-    extractedTextEl.appendChild(wrapper);
+    //extractedTextEl.appendChild(wrapper);
   });
 
   // Background processing (cache embeddings etc.)
@@ -770,6 +807,7 @@ async function generateTextRecommendations() {
 document.addEventListener("DOMContentLoaded", () => {
   if (res.file_url) {
     initAdobeView(res.file_url);
+    console.log(res.file_url, "PDF file URL loaded");
   }
   updateAnnotationCount();
 });
