@@ -581,44 +581,21 @@ async def insights(
         # Configure Gemini (use a widely supported model and JSON mime type)
         genai.configure(api_key=api_key)
         
-        # Customize system instructions based on whether text is selected
-        if text and text.strip():
-            system_instructions = (
-                "You are an analytical assistant. Given selected text and document excerpts, "
-                "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-                "Focus your analysis on the selected text and how it relates to the broader document context. "
-                "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
-                "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
-                "For each claim, suggest an alternate interpretation or scenario where it may not be true."
-            )
-            prompt = (
-                f"Selected Text: {text.strip()}\n\n"
-                f"Persona: {persona or 'N/A'}\n"
-                f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
-                "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
-            )
-        else:
-            system_instructions = (
-                "You are an analytical assistant. Given document excerpts and optional cross-document context, "
-                "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-                "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
-                "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
-                "For each claim, suggest an alternate interpretation or scenario where it may not be true."
-            )
-            prompt = (
-                f"Persona: {persona or 'N/A'}\n"
-                f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
-                "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
-            )
-
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_instructions,
-            generation_config={
-                "response_mime_type": "application/json",
-                "temperature": 0.3,
-                "max_output_tokens": 1024,
-            },
+        # System instructions: force LLM to always provide at least 2 items for each key
+        system_instructions = (
+            "You are an analytical assistant. Given selected text and document excerpts, "
+            "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
+            "You MUST provide at least 2 meaningful, non-empty items for each array, even if you need to infer, generalize, or speculate based on context. "
+            "Never leave any array empty. "
+            "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
+            "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
+            "For each claim, suggest an alternate interpretation or scenario where it may not be true."
+        )
+        prompt = (
+            f"Selected Text: {text.strip() or 'N/A'}\n\n"
+            f"Persona: {persona or 'N/A'}\n"
+            f"JobToBeDone: {job_to_be_done or 'N/A'}\n\n"
+            "Current Document Context:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
         )
 
         if connections_context:
@@ -632,7 +609,17 @@ async def insights(
             "  \"contradictions_or_counterpoints\": string[],\n"
             "  \"inspirations_or_connections\": string[]\n"
             "}\n"
-            "Max 6 items per list."
+            "You MUST provide at least 2 items for each array, even if you need to infer or generalize. Max 6 items per list."
+        )
+
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=system_instructions,
+            generation_config={
+                "response_mime_type": "application/json",
+                "temperature": 0.3,
+                "max_output_tokens": 1024,
+            },
         )
 
         response = model.generate_content(prompt)
@@ -654,7 +641,7 @@ async def insights(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Insights failed: {str(e)}")
 
-
+'''
 @app.post("/api/podcast")
 async def podcast(
     filename: str = Form(...),
@@ -870,6 +857,253 @@ async def podcast(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Podcast failed: {str(e)}")
+'''
+
+import time
+import requests
+#from pydub import AudioSegment
+
+# Azure keys
+AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "").strip()
+AZURE_REGION = os.getenv("AZURE_TTS_REGION", "").strip()
+AZURE_TTS_ENDPOINT = f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
+
+# Two different Azure voices
+VOICE_A = "en-US-JennyNeural"  # Host A
+VOICE_B = "en-US-GuyNeural"    # Host B
+
+
+def azure_tts_speak(text: str, voice: str, tmp_file: str):
+    """Call Azure TTS for a given text and voice, save to tmp_file"""
+    
+    headers = {
+        "Ocp-Apim-Subscription-Key": AZURE_TTS_KEY,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-48khz-192kbitrate-mono-mp3"
+    }
+    ssml = f"""
+    <speak version='1.0' xml:lang='en-US'>
+        <voice xml:lang='en-US' name='{voice}'>
+            {text}
+        </voice>
+    </speak>
+    """
+    resp = requests.post(AZURE_TTS_ENDPOINT, headers=headers, data=ssml.encode("utf-8"))
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Azure TTS error: {resp.text}")
+    with open(tmp_file, "wb") as f:
+        f.write(resp.content)
+
+
+import ffmpeg
+@app.post("/api/podcast")
+async def podcast(
+    filename: str = Form(...),
+    persona: str = Form(""),
+    job_to_be_done: str = Form(""),
+    text: str = Form(""),
+):
+    api_key = os.getenv("GEMINI_API", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API env var not set")
+
+    pdf_path = os.path.join(UPLOADS_DIR, os.path.basename(filename))
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="File not found. Upload first.")
+
+    try:
+        # ... keep your INSIGHTS + SCRIPT generation code as-is up to script_text ...
+        # Reuse insights generation
+        fake_form = {"filename": filename, "persona": persona, "job_to_be_done": job_to_be_done, "text": text}
+        # Call internal function by simulating request: easiest is to reuse blocks here
+        # Ensure cache and ranked contexts
+        cached = _ensure_cached(pdf_path)
+        sections = cached.get("sections", [])
+        
+        # If text is provided, focus on sections containing that text
+        if text and text.strip():
+            # Find sections that contain the selected text
+            relevant_sections = []
+            for s in sections:
+                if text.lower() in s["content"].lower():
+                    relevant_sections.append(s)
+            
+            if relevant_sections:
+                sections = relevant_sections
+            # If no exact matches, use semantic search
+            else:
+                # Use the 1B model to find semantically similar sections
+                query_embedding, query_text = ranker_singleton.create_query_embedding(
+                    persona, job_to_be_done
+                )
+                
+                # Create embeddings for all sections
+                section_texts = [f"{s['title']}. {s['content'][:500]}" for s in sections]
+                import torch
+                with torch.no_grad():
+                    section_embeddings = ranker_singleton.model.encode(
+                        section_texts, convert_to_tensor=True, convert_to_numpy=True
+                    )
+                
+                # Calculate similarities
+                from sklearn.metrics.pairwise import cosine_similarity
+                similarities = cosine_similarity([query_embedding], section_embeddings)[0]
+                
+                # Sort sections by similarity to selected text
+                section_similarities = list(zip(sections, similarities))
+                section_similarities.sort(key=lambda x: x[1], reverse=True)
+                sections = [s[0] for s in section_similarities[:5]]  # Top 5 most similar
+        
+        ranked = ranker_singleton.rank_sections(
+            [
+                {"document": os.path.basename(pdf_path), "title": s["title"], "content": s["content"], "page": s["page"]}
+                for s in sections
+            ],
+            persona,
+            job_to_be_done,
+            description="",
+            top_k=8,
+            expected_titles=None,
+        )
+        current_doc_context = [
+            f"Section: {r['section']['title']} (p.{r['section']['page']})\n" + _truncate(r['section']["content"], 1200)
+            for r in ranked
+        ]
+        related = compute_related_sections(pdf_path, persona, job_to_be_done, description="")
+        connections_context: List[str] = []
+        for group in related:
+            for rel in group.get("related", []):
+                other_path = os.path.join(UPLOADS_DIR, os.path.basename(rel["document"]))
+                other_cached = _ensure_cached(other_path)
+                found = None
+                for s in other_cached.get("sections", []):
+                    if s["title"] == rel["section_title"] and s["page"] == rel["page_number"]:
+                        found = s
+                        break
+                snippet = _truncate(found["content"], 400) if found else ""
+                connections_context.append(f"{rel['document']} • {rel['section_title']}: {snippet}")
+
+        # Configure Gemini
+        genai.configure(api_key=api_key)
+        # Ask for JSON insights first (same prompt as /api/insights)
+        insights_model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={"response_mime_type": "application/json", "temperature": 0.3},
+        )
+        
+        # Customize prompt based on whether text is selected
+        if text and text.strip():
+            insights_prompt = (
+                f"Selected Text: {text.strip()}\n\n"
+                "Summarize the core insights from the following notes, focusing on the selected text. Return strictly JSON with keys: "
+                "key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections.\n\n"
+                + "Current Doc Notes:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
+        else:
+            insights_prompt = (
+                "Summarize the core insights from the following notes. Return strictly JSON with keys: "
+                "key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections.\n\n"
+                + "Current Doc Notes:\n" + "\n\n".join(current_doc_context[:8]) + "\n\n"
+            )
+            
+        if connections_context:
+            insights_prompt += "Cross-doc Notes:\n" + "\n\n".join(connections_context[:10]) + "\n\n"
+        insights_response = insights_model.generate_content(insights_prompt)
+        insights_text = getattr(insights_response, "text", None) or (
+            insights_response.candidates[0].content.parts[0].text if getattr(insights_response, "candidates", None) else ""
+        )
+        insights_data = _safe_json_parse(insights_text or "")
+
+        # Step 2: serialize into podcast script prompt and ask Gemini to humanize
+        script_model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={"temperature": 0.7, "max_output_tokens": 2048},
+        )
+        
+        # Customize script prompt based on whether text is selected
+        if text and text.strip():
+            script_prompt = (
+                "You are a podcast host duo with two speakers: HOST_A and HOST_B. Turn the following structured insights into a 2-3 minute conversational script. "
+                "Focus your discussion on the selected text and how it relates to the broader context. "
+                "Rules: strictly format each line as 'HOST_A: ...' or 'HOST_B: ...'. No other prefixes, no stage directions. "
+                "Ensure a natural alternating conversation (but do not force rigid alternation) and keep sentences spoken by only the labeled host. "
+                "Make it engaging, friendly, and informative with light transitions and a short recap at the end.\n\n"
+                f"Selected Text: {text.strip()}\n\n"
+                f"Persona: {persona or 'N/A'} | Job To Be Done: {job_to_be_done or 'N/A'}\n\n"
+                f"Insights JSON:\n{json.dumps(insights_data, ensure_ascii=False, indent=2)}\n\n"
+                "Return only the script text with lines starting by HOST_A: or HOST_B: ."
+            )
+        else:
+            script_prompt = (
+                "You are a podcast host duo with two speakers: HOST_A and HOST_B. Turn the following structured insights into a 2-3 minute conversational script. "
+                "Rules: strictly format each line as 'HOST_A: ...' or 'HOST_B: ...'. No other prefixes, no stage directions. "
+                "Ensure a natural alternating conversation (but do not force rigid alternation) and keep sentences spoken by only the labeled host. "
+                "Make it engaging, friendly, and informative with light transitions and a short recap at the end.\n\n"
+                f"Persona: {persona or 'N/A'} | Job To Be Done: {job_to_be_done or 'N/A'}\n\n"
+                f"Insights JSON:\n{json.dumps(insights_data, ensure_ascii=False, indent=2)}\n\n"
+                "Return only the script text with lines starting by HOST_A: or HOST_B: ."
+            )
+            
+        script_response = script_model.generate_content(script_prompt)
+        script_text = getattr(script_response, "text", "").strip()
+        if not script_text:
+            raise HTTPException(status_code=500, detail="Failed to generate podcast script")
+
+        # Step 3: Multi-voice Azure TTS
+        if not AZURE_TTS_KEY or not AZURE_REGION:
+            raise HTTPException(status_code=500, detail="Azure TTS not configured")
+
+        ts = int(time.time())
+        base = os.path.splitext(os.path.basename(filename))[0]
+        out_name = f"{base}_{ts}.mp3"
+        out_path = os.path.join(UPLOADS_VO_DIR, out_name)
+
+        # Parse lines into speakers
+        lines: List[Tuple[str, str]] = []
+        for raw in script_text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("HOST_A:"):
+                lines.append(("A", line[len("HOST_A:"):].strip()))
+            elif line.startswith("HOST_B:"):
+                lines.append(("B", line[len("HOST_B:"):].strip()))
+            else:
+                lines.append(("A", line))  # fallback
+
+        # --- Generate temp audio files ---
+        tmp_files = []
+        for i, (speaker, seg_text) in enumerate(lines):
+            tmp_file = os.path.join(UPLOADS_VO_DIR, f"tmp_{ts}_{i}.mp3")
+            voice = VOICE_A if speaker == "A" else VOICE_B
+            azure_tts_speak(seg_text, voice, tmp_file)
+            tmp_files.append(tmp_file)
+
+        # --- Merge with ffmpeg ---
+        input_streams = [ffmpeg.input(f) for f in tmp_files]
+        (
+            ffmpeg.concat(*input_streams, v=0, a=1)
+            .output(out_path)
+            .run(overwrite_output=True, quiet=True)
+        )
+
+        # cleanup temp files
+        for f in tmp_files:
+            try:
+                os.remove(f)
+            except:
+                pass
+
+        return {
+            "audio_url": f"/uploads/VO/{out_name}",
+            "script": script_text,
+            "insights": insights_data,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Podcast failed: {str(e)}")
 
 from urllib.parse import quote
 
@@ -890,11 +1124,13 @@ async def upload(files: List[UploadFile] = File(...)) -> Dict[str, Any]:
         encoded_name = quote(safe_name)      # safe for URL
 
         # --- IMPORTANT: store mapping for analysis later ---
+        '''
         analysis_cache.register_document(
             safe_name=safe_name,
             file_url=f"/uploads/{encoded_name}",
             display_name=f.filename
         )
+        '''
 
         saved.append(f"/uploads/{encoded_name}")
     
@@ -929,6 +1165,8 @@ async def analyze(
     try:
         result = analyze_pdf(pdf_path, persona, job_to_be_done, description, top_k=5)
         related = compute_related_sections(pdf_path, persona, job_to_be_done, description)
+        result["persona"] = persona
+        result["job_to_be_done"] = job_to_be_done
         result["related_sections"] = related
         result["file_url"] = f"/uploads/{os.path.basename(filename)}"
         return JSONResponse(result)

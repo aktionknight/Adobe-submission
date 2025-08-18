@@ -28,7 +28,7 @@
       </div>
       <div class="pdf-tools">
         <button class="btn-icon" id="btn-insights" title="Generate insights">💡</button>
-        <button class="btn-icon" id="btn-mic" title="Create podcast">🎤</button>
+        
       </div>
     </div>
 
@@ -45,6 +45,7 @@
             <button class="btn-clear" onclick="checkAdobeAPIsStatus()" title="Check Adobe APIs status" id="btn-status">📊</button>
             <button class="btn-clear" onclick="generateTextRecommendations()" title="Generate recommendations" id="btn-text-recommendations" disabled>💡</button>
             <button class="btn-clear" onclick="generateSelectionInsights()" title="Generate insights" id = "btn-text-insights"disabled>💡</button>
+            <button class="btn-clear" id="btn-mic" title="Create podcast" disabled>🎤</button>
           </div>
         </div>
         <div class="help-text">
@@ -57,7 +58,8 @@
       <div class="card">
         <h3>Persona & Job Recommendations</h3>
         <div class="card-header">
-          <button class="btn-clear" onclick="generatePersonaRecommendations()" title="Generate recommendations">💡</button>
+          <span class="selected-text-info" id="selected-text-info">No text input for Persona +Job</span>
+          <button class="btn-clear" onclick="generatePersonaRecommendations()" title="Generate recommendations" id = "personaBtn" disabled>💡</button>
         </div>
         <div id="persona-recommendations" class="list"></div>
       </div>
@@ -85,6 +87,39 @@
   const personaRecommendationsEl = document.getElementById('persona-recommendations');
   const textRecommendationsEl = document.getElementById('text-recommendations');
   const insightsEl = document.getElementById('insights');
+
+  const personaInput = document.getElementById('persona');
+  const persona = personaInput ? personaInput.value.trim() : '';
+  sessionStorage.setItem('persona', persona || '');
+  if (!sessionStorage.getItem('persona') && res && res.persona) {
+  sessionStorage.setItem('persona', res.persona);
+}
+
+
+  console.log("Persona from sessionStorage:", sessionStorage.getItem('persona'));
+console.log("Job from sessionStorage:", sessionStorage.getItem('job'));
+
+  //toggling button for persona
+  document.addEventListener("DOMContentLoaded", () => {
+  const personaRaw = sessionStorage.getItem('persona');
+  const jobRaw = sessionStorage.getItem('job');
+
+  const persona = (personaRaw && personaRaw !== "null" && personaRaw !== "undefined")
+    ? personaRaw.trim()
+    : '';
+
+  const job = (jobRaw && jobRaw !== "null" && jobRaw !== "undefined")
+    ? jobRaw.trim()
+    : '';
+
+  const personaBtn = document.getElementById('personaBtn');
+  const jobBtn = document.getElementById('btn-job-recommendations');
+
+  if (personaBtn) personaBtn.disabled = persona === '';
+  if (jobBtn) jobBtn.disabled = job === '';
+});
+
+
 
     function waitForAdobeScript() {
     return new Promise((resolve, reject) => {
@@ -384,6 +419,7 @@ async function searchAndHighlight(searchText, pageNum) {
     const selectedTextInfo = document.getElementById('selected-text-info');
     const btnTextRecommendations = document.getElementById('btn-text-recommendations');
     const btnTextInsights = document.getElementById('btn-text-insights');
+    const btnPodcast = document.getElementById('btn-mic');
     if (selectedText && selectedText.trim()) {
       if (selectedTextInfo) {
         selectedTextInfo.textContent = `Selected: "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`;
@@ -392,6 +428,7 @@ async function searchAndHighlight(searchText, pageNum) {
       }
       if (btnTextRecommendations) btnTextRecommendations.disabled = false;
       if (btnTextInsights) btnTextInsights.disabled = false;
+      if (btnPodcast) btnPodcast.disabled = false;
     } else {
       if (selectedTextInfo) {
         selectedTextInfo.textContent = 'No text selected';
@@ -400,6 +437,7 @@ async function searchAndHighlight(searchText, pageNum) {
       }
       if (btnTextRecommendations) btnTextRecommendations.disabled = true;
       if (btnTextInsights) btnTextInsights.disabled = true;
+      if (btnPodcast) btnPodcast.disabled = true;
     }
   }
 
@@ -468,27 +506,37 @@ async function searchAndHighlight(searchText, pageNum) {
   }
 
   /* -------------------- Recommendations / Insights / Podcast -------------------- */
-  function renderPersonaRecommendations(relatedSections) {
-    if (!personaRecommendationsEl) return;
-    personaRecommendationsEl.innerHTML = '';
-    if (!relatedSections.length) {
-      personaRecommendationsEl.innerHTML = '<div class="muted">No related sections found</div>';
-      return;
-    }
-    relatedSections.forEach(group => {
-      const src = group.source || {};
-      const head = document.createElement('div');
-      head.innerHTML = `<div><b>${escapeForAttribute(src.section_title || '')}</b> <span class="muted">(p.${src.page_number || 1})</span></div>`;
-      personaRecommendationsEl.appendChild(head);
-      (group.related || []).forEach(r => {
-        const item = document.createElement('div');
-        item.className = 'related-item';
-        item.textContent = `↳ ${r.section_title} (${r.document}, p.${r.page_number})`;
-        item.onclick = () => renderPDF('/uploads/' + r.document, r.page_number);
-        personaRecommendationsEl.appendChild(item);
-      });
-    });
+function renderPersonaRecommendations(relatedSections) {
+  if (!personaRecommendationsEl) return;
+  personaRecommendationsEl.innerHTML = '';
+  
+  if (!relatedSections.length) {
+    personaRecommendationsEl.innerHTML = '<div class="muted">No related sections found</div>';
+    return;
   }
+
+  relatedSections.forEach(group => {
+    const src = group.source || {};
+    const head = document.createElement('div');
+    head.innerHTML = `<div><b>${escapeForAttribute(src.section_title || '')}</b> <span class="muted">(p.${src.page_number || 1})</span></div>`;
+    personaRecommendationsEl.appendChild(head);
+
+    (group.related || []).forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'related-item';
+      item.textContent = `↳ ${r.section_title} (${r.document}, p.${r.page_number})`;
+
+      // 👇 Use gotoSection instead of renderPDF
+      item.onclick = () => {
+        const fileUrl = r.file_url ? r.file_url : ('/uploads/' + encodeURIComponent(r.document));
+        gotoSection(fileUrl, r.page_number);
+      };
+
+      personaRecommendationsEl.appendChild(item);
+    });
+  });
+}
+
 
 function renderTextRecommendations(recs) {
   const container = document.getElementById("recommendations-container");

@@ -149,29 +149,46 @@
       await refreshDocs();
     };
 
-    document.getElementById('analyze').onclick = async () => {
-      if (!docSelect.value) { alert('Select a PDF first.'); return; }
-      const persona = document.getElementById('persona').value.trim();
-      const job = document.getElementById('job').value.trim();
-      if (!persona) { alert('Please enter a persona.'); return; }
-      if (!job) { alert('Please enter a job to be done.'); return; }
-      const fd = new FormData();
-      fd.append('filename', docSelect.value);
-      fd.append('persona', persona);
-      fd.append('job_to_be_done', job);
-      overlay.style.display = 'flex'; overlayText.textContent = 'Analyzing…';
-      try {
-        const res = await api('/api/analyze', { method: 'POST', body: fd });
-        sessionStorage.setItem('analysis_result', JSON.stringify(res));
-        sessionStorage.setItem('persona', persona);
-        sessionStorage.setItem('job', job);
-        window.location.href = '/app/viewer.html';
-      } catch (e) {
-        overlay.style.display = 'none';
-        statusEl.textContent = 'Failed to analyze. See console.';
-        console.error(e);
-      }
-    };
+  document.getElementById('analyze').onclick = async () => {
+  if (!docSelect.value) { 
+    alert('Select a PDF first.'); 
+    return; 
+  }
+const personaInput = document.getElementById('persona');
+const jobInput = document.getElementById('job');
+
+console.log("Persona input value:", personaInput ? personaInput.value : "not found");
+console.log("Job input value:", jobInput ? jobInput.value : "not found");
+
+const persona = personaInput ? personaInput.value.trim() : '';
+const job = jobInput ? jobInput.value.trim() : '';
+
+sessionStorage.setItem('persona', persona || '');
+sessionStorage.setItem('job', job || '');
+
+const fd = new FormData();
+fd.append('filename', docSelect.value);
+fd.append('persona', persona);
+fd.append('job_to_be_done', job);
+
+overlay.style.display = 'flex';
+overlayText.textContent = 'Analyzing…';
+
+try {
+  const res = await api('/api/analyze', { method: 'POST', body: fd });
+
+  sessionStorage.setItem('analysis_result', JSON.stringify(res));
+  sessionStorage.setItem('persona', persona);   // may be empty
+  sessionStorage.setItem('job', job);           // may be empty
+  window.location.href = '/app/viewer.html';
+} catch (e) {
+  overlay.style.display = 'none';
+  statusEl.textContent = 'Failed to analyze. See console.';
+  console.error(e);
+}
+};
+
+
   </script>
 </body>
 </html> 
