@@ -20,7 +20,7 @@ COPY . ./
 # (Deps already installed from /tmp/requirements.txt above)
 
 # Expose port for FastAPI
-EXPOSE 8080
+EXPOSE 8080:8080
 
 # Set environment variables (these will be overridden by docker run -e ...)
 ENV HOST=0.0.0.0

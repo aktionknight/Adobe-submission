@@ -13,4 +13,7 @@ torch
 PyPDF2
 # For static file serving
 aiofiles
-fitz
+PyMuPDF
+pytesseract
+sentence-transformers 
+python-multipart
