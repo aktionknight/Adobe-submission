@@ -7,26 +7,51 @@
   <link rel="stylesheet" href="/app/styles.css" />
 </head>
 <body>
-  <header>
-    <div>Adobe 1B Reader • Upload & Analyze</div>
-    <div class="muted">Tip: set your Adobe Embed Client ID in console → localStorage.setItem('adobe_embed_client_id','YOUR_ID')</div>
-  </header>
-  <div class="container">
+  <!-- Hero Section -->
+   <div class="hero-section">
+  <div class="hero">
+    <div class="hero-content">
+      <img src="assets/Adobe_Acrobat_DC_logo_2020.svg" alt="Adobe Acrobat Logo" class="adobe-icon" />
+      <h1 class="hero-title">Experience Adobe Acrobat.Ai</h1>
+      <p class="hero-desc">
+        Upload, analyze, and get insights from the PDFs you read instantly.
+      </p>
+      <button class="cta-btn" onclick="document.getElementById('main-card').scrollIntoView({behavior:'smooth'})">
+        Get Started
+      </button>
+    </div>
+  </div>
+  </div>
+
+  <!-- Upload & Analyze Section -->
+  <div class="container" id="main-card">
     <div class="card">
-      <div class="row">
-        <input type="file" id="file-input" multiple accept="application/pdf" />
-        <button id="upload">Upload</button>
-        <button id="refresh">Clear All Files</button>
+      <div style="font-size:1.15rem;font-weight:600;margin-bottom:10px;">Upload & Analyze — Adobe Acrobat</div>
+      <div class="muted" style="margin-bottom:18px;">
+        Drop PDFs here or choose files. Then pick a PDF, add persona/job (optional), and analyze.
       </div>
+<div class="row">
+  <label for="file-input" class="file-btn">Choose Files</label>
+  <input type="file" id="file-input" multiple accept="application/pdf" />
+  <button id="upload">Upload</button>
+  <button id="refresh">Clear All Files</button>
+</div>
       <div id="docs" class="docs"></div>
     </div>
 
     <div class="card">
       <div class="col">
         <div class="row">
-          <label class="label-fixed">Select PDF</label>
-          <select id="doc-select" class="flex-1"></select>
-        </div>
+  <label class="label-fixed">Select PDF</label>
+  <select id="doc-select" class="flex-1"></select>
+</div>
+</div>
+</div>
+<div class="card">
+  
+  <div class="col">
+          <div style="font-size:1.15rem;font-weight:600;margin-bottom:10px;">Add-On (optional)</div>
+
         <div class="row">
           <label class="label-fixed">Persona</label>
           <input type="text" id="persona" class="flex-1" placeholder="e.g., Travel Planner, Food Critic, HR Professional" />
@@ -41,8 +66,10 @@
         <div class="muted" id="status"></div>
       </div>
     </div>
+  
   </div>
 
+  <!-- Overlay -->
   <div id="overlay" class="overlay">
     <div class="center">
       <div class="spinner"></div>
@@ -50,6 +77,11 @@
     </div>
   </div>
 
+  <!-- Footer -->
+  <div class="footer">
+    Made By Commit This Later. Adobe India Hackathon 2025.
+  </div>
+</body>
   <script>
     let adobeApiKey = '';
     
@@ -59,13 +91,12 @@
         const config = await api('/api/config');
         adobeApiKey = config.adobe_api_key;
         if (adobeApiKey && adobeApiKey !== 'YOUR_ADOBE_EMBED_CLIENT_ID_HERE') {
-          // Store in localStorage for the viewer
           localStorage.setItem('adobe_embed_client_id', adobeApiKey);
-          // Update the tip message
           const tipElement = document.querySelector('.muted');
           if (tipElement) {
             tipElement.textContent = 'Adobe API key loaded from server configuration';
-            tipElement.style.color = '#4CAF50';
+            tipElement.style.color = '#C0C0C0';
+            //tipElement.style.size = '0.5rem';
           }
         } else {
           const tipElement = document.querySelector('.muted');
@@ -85,8 +116,7 @@
     }
 
     const api = async (path, opts={}) => {
-      // Ensure API calls are made to the correct base URL
-      const baseUrl = window.location.origin; // e.g., http://127.0.0.1:8000
+      const baseUrl = window.location.origin;
       const fullUrl = path.startsWith('/') ? baseUrl + path : baseUrl + '/' + path;
       const r = await fetch(fullUrl, opts);
       if (!r.ok) {
@@ -101,21 +131,57 @@
     const overlayText = document.getElementById('overlay-text');
     const statusEl = document.getElementById('status');
 
+    // --- updated refreshDocs ---
     async function refreshDocs() {
       try {
         const data = await api('/api/documents');
         docSelect.innerHTML = '';
         docsEl.innerHTML = '';
-        (data.documents || []).forEach(d => {
+
+        (data.documents || []).forEach((d, idx) => {
+          // Add option to <select>
           const o = document.createElement('option');
-          o.value = d.name; o.textContent = d.name; docSelect.appendChild(o);
-          const card = document.createElement('div'); card.className = 'doc'; card.textContent = d.name; docsEl.appendChild(card);
+          o.value = d.name; 
+          o.textContent = d.name; 
+          docSelect.appendChild(o);
+
+          // Add clickable card
+          const card = document.createElement('div'); 
+          card.className = 'doc'; 
+          card.textContent = d.name;
+
+          // click → update select
+          card.addEventListener('click', () => {
+            docSelect.value = d.name;
+            highlightActiveDoc(d.name);
+          });
+
+          docsEl.appendChild(card);
+
+          // Select the first by default
+          if (idx === 0) {
+            docSelect.value = d.name;
+            highlightActiveDoc(d.name);
+          }
         });
+
       } catch (e) {
         console.error('refreshDocs error', e);
         statusEl.textContent = 'Cannot reach API. Is the FastAPI server running on port 8000?';
       }
     }
+
+    // highlight helper
+    function highlightActiveDoc(name) {
+      document.querySelectorAll('.doc').forEach(el => {
+        el.classList.toggle('active', el.textContent === name);
+      });
+    }
+
+    // sync dropdown → docs
+    docSelect.addEventListener('change', () => {
+      highlightActiveDoc(docSelect.value);
+    });
 
     async function clearAllDocs() {
       if (!confirm('Are you sure you want to delete all uploaded files?')) return;
@@ -135,7 +201,6 @@
 
     document.getElementById('refresh').onclick = clearAllDocs;
     
-    // Load configuration and then refresh documents
     loadConfig().then(() => refreshDocs());
 
     document.getElementById('upload').onclick = async () => {
@@ -149,46 +214,41 @@
       await refreshDocs();
     };
 
-  document.getElementById('analyze').onclick = async () => {
-  if (!docSelect.value) { 
-    alert('Select a PDF first.'); 
-    return; 
-  }
-const personaInput = document.getElementById('persona');
-const jobInput = document.getElementById('job');
+    document.getElementById('analyze').onclick = async () => {
+      if (!docSelect.value) { 
+        alert('Select a PDF first.'); 
+        return; 
+      }
+      const personaInput = document.getElementById('persona');
+      const jobInput = document.getElementById('job');
 
-console.log("Persona input value:", personaInput ? personaInput.value : "not found");
-console.log("Job input value:", jobInput ? jobInput.value : "not found");
+      const persona = personaInput ? personaInput.value.trim() : '';
+      const job = jobInput ? jobInput.value.trim() : '';
 
-const persona = personaInput ? personaInput.value.trim() : '';
-const job = jobInput ? jobInput.value.trim() : '';
+      sessionStorage.setItem('persona', persona || '');
+      sessionStorage.setItem('job', job || '');
 
-sessionStorage.setItem('persona', persona || '');
-sessionStorage.setItem('job', job || '');
+      const fd = new FormData();
+      fd.append('filename', docSelect.value);
+      fd.append('persona', persona);
+      fd.append('job_to_be_done', job);
 
-const fd = new FormData();
-fd.append('filename', docSelect.value);
-fd.append('persona', persona);
-fd.append('job_to_be_done', job);
+      overlay.style.display = 'flex';
+      overlayText.textContent = 'Analyzing…';
 
-overlay.style.display = 'flex';
-overlayText.textContent = 'Analyzing…';
+      try {
+        const res = await api('/api/analyze', { method: 'POST', body: fd });
+        sessionStorage.setItem('analysis_result', JSON.stringify(res));
+        sessionStorage.setItem('persona', persona);
+        sessionStorage.setItem('job', job);
+        window.location.href = '/app/viewer.html';
+      } catch (e) {
+        overlay.style.display = 'none';
+        statusEl.textContent = 'Failed to analyze. See console.';
+        console.error(e);
+      }
+    };
+</script>
 
-try {
-  const res = await api('/api/analyze', { method: 'POST', body: fd });
-
-  sessionStorage.setItem('analysis_result', JSON.stringify(res));
-  sessionStorage.setItem('persona', persona);   // may be empty
-  sessionStorage.setItem('job', job);           // may be empty
-  window.location.href = '/app/viewer.html';
-} catch (e) {
-  overlay.style.display = 'none';
-  statusEl.textContent = 'Failed to analyze. See console.';
-  console.error(e);
-}
-};
-
-
-  </script>
 </body>
-</html> 
+</html>

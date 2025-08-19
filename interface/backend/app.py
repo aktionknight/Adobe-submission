@@ -866,7 +866,7 @@ import requests
 # Azure keys
 AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "").strip()
 AZURE_REGION = os.getenv("AZURE_TTS_REGION", "").strip()
-AZURE_TTS_ENDPOINT = f"https://{AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1"
+AZURE_TTS_ENDPOINT = f"https://southeastasia.tts.speech.microsoft.com/cognitiveservices/v1"
 
 # Two different Azure voices
 VOICE_A = "en-US-JennyNeural"  # Host A
@@ -894,7 +894,7 @@ def azure_tts_speak(text: str, voice: str, tmp_file: str):
     with open(tmp_file, "wb") as f:
         f.write(resp.content)
 
-
+from pydub import AudioSegment
 import ffmpeg
 @app.post("/api/podcast")
 async def podcast(
@@ -1076,18 +1076,18 @@ async def podcast(
         for i, (speaker, seg_text) in enumerate(lines):
             tmp_file = os.path.join(UPLOADS_VO_DIR, f"tmp_{ts}_{i}.mp3")
             voice = VOICE_A if speaker == "A" else VOICE_B
-            azure_tts_speak(seg_text, voice, tmp_file)
+            azure_tts_speak(seg_text, voice, tmp_file)   # Save each line as MP3
             tmp_files.append(tmp_file)
 
-        # --- Merge with ffmpeg ---
-        input_streams = [ffmpeg.input(f) for f in tmp_files]
-        (
-            ffmpeg.concat(*input_streams, v=0, a=1)
-            .output(out_path)
-            .run(overwrite_output=True, quiet=True)
-        )
+        # --- Merge with pydub ---
+        combined = AudioSegment.silent(duration=300)  # small intro pause
+        for f in tmp_files:
+            seg = AudioSegment.from_file(f, format="mp3")
+            combined += seg + AudioSegment.silent(duration=400)  # pause between speakers
 
-        # cleanup temp files
+        combined.export(out_path, format="mp3")
+
+        # --- Cleanup temp files ---
         for f in tmp_files:
             try:
                 os.remove(f)
@@ -1223,21 +1223,45 @@ async def trigger_background_processing():
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok"}
-
 @app.delete("/api/documents")
 def clear_all_documents() -> Dict[str, Any]:
-    """Delete all uploaded documents"""
+    """Delete all uploaded documents but keep VO folder"""
     try:
         import shutil
-        # Remove and recreate the uploads directory
-        if os.path.exists(UPLOADS_DIR):
-            shutil.rmtree(UPLOADS_DIR)
+
+        # Ensure uploads dir exists
         os.makedirs(UPLOADS_DIR, exist_ok=True)
-        return {"message": "All documents cleared successfully"}
+        os.makedirs(UPLOADS_VO_DIR, exist_ok=True)  # VO folder stays
+
+        # Iterate through uploads but skip VO folder
+        for item in os.listdir(UPLOADS_DIR):
+            path = os.path.join(UPLOADS_DIR, item)
+            if os.path.isdir(path) and path == UPLOADS_VO_DIR:
+                continue  # don't delete VO
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+
+        return {"message": "All documents cleared successfully, VO preserved"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear documents: {str(e)}")
+
+@app.delete("/api/podcasts")
+def clear_all_podcasts() -> Dict[str, Any]:
+    """Delete all podcast audio files from VO folder"""
+    try:
+        import shutil
+        
+        if os.path.exists(UPLOADS_VO_DIR):
+            shutil.rmtree(UPLOADS_VO_DIR)
+        os.makedirs(UPLOADS_VO_DIR, exist_ok=True)  # recreate empty VO folder
+
+        return {"message": "All podcast audio cleared successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear podcasts: {str(e)}")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=True)

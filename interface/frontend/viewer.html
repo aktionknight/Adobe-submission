@@ -10,7 +10,7 @@
 </head>
 <body>
   <header>
-    <div>Adobe 1B Reader • Viewer</div>
+    <div>Adobe Acrobat.Ai • Pdf Assistant</div>
     <div>
       <a href="/app/" class="link-back">← Back</a>
     </div>
@@ -40,11 +40,8 @@
           <span class="selected-text-info" id="selected-text-info">No text selected</span>
           <div class="selection-controls">
             <button class="btn-clear" onclick="clearSelectedText()" title="Clear text selection" id="btn-clear-selection">🗑️</button>
-            <button class="btn-clear" onclick="retryGetAdobeAPIs()" title="Retry Adobe APIs" id="btn-retry-apis">🔄</button>
-            <button class="btn-clear" onclick="testAdobeAPIs()" title="Test Adobe APIs" id="btn-test-apis">🧪</button>
-            <button class="btn-clear" onclick="checkAdobeAPIsStatus()" title="Check Adobe APIs status" id="btn-status">📊</button>
-            <button class="btn-clear" onclick="generateTextRecommendations()" title="Generate recommendations" id="btn-text-recommendations" disabled>💡</button>
-            <button class="btn-clear" onclick="generateSelectionInsights()" title="Generate insights" id = "btn-text-insights"disabled>💡</button>
+            <button class="btn-clear" onclick="generateTextRecommendations()" title="Generate recommendations" id="btn-text-recommendations" disabled>▶</button>
+            <button class="btn-clear" onclick="generateInsightsForSelectedText()" title="Generate insights" id = "btn-text-insights"disabled>💡</button>
             <button class="btn-clear" id="btn-mic" title="Create podcast" disabled>🎤</button>
           </div>
         </div>
@@ -54,11 +51,17 @@
         <div id="text-recommendations" class="list"></div>
         <div id="recommendations-container"></div>
       </div>
+       <div class="card" id="podcast-container">
+  <h3>Podcast</h3>
+  <div id="podcast-placeholder" class="loader-container">
+    <span class="selected-text-info" id="selected-text-info">No Podcast Generated yet</span>
+  </div>
+</div>
 
       <div class="card">
         <h3>Persona & Job Recommendations</h3>
         <div class="card-header">
-          <span class="selected-text-info" id="selected-text-info">No text input for Persona +Job</span>
+          
           <button class="btn-clear" onclick="generatePersonaRecommendations()" title="Generate recommendations" id = "personaBtn" disabled>💡</button>
         </div>
         <div id="persona-recommendations" class="list"></div>
@@ -79,6 +82,7 @@
   </div>
 
   <div id="notification-container"></div>
+ 
 
   <script>
   /* -------------------- State / helpers -------------------- */
@@ -141,24 +145,29 @@ console.log("Job from sessionStorage:", sessionStorage.getItem('job'));
   let currentAnnotations = [];
   let selectedText = "";
 
-  function showNotification(message, type = 'info') {
-    const container = document.getElementById('notification-container');
-    if (!container) return;
-    const colors = { info: '#2196F3', success: '#4CAF50', warning: '#FF9800', error: '#f44336' };
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-      background: ${colors[type] || colors.info};
-      color: white;
-      padding: 12px 20px;
-      border-radius: 6px;
-      margin-bottom: 10px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      max-width: 320px;
-    `;
-    notification.textContent = message;
-    container.appendChild(notification);
-    setTimeout(() => { notification.style.opacity = '0'; setTimeout(() => notification.remove(), 300); }, 3000);
-  }
+
+function showNotification(message, type = "success", timeout = 4000) {
+  const container = document.getElementById("notification-container");
+  if (!container) return;
+
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+
+  container.appendChild(toast);
+
+  // Auto remove after timeout
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(20px)";
+    setTimeout(() => toast.remove(), 300);
+  }, timeout);
+}
+
+// Example usage
+// showNotification("Background processing completed", "success");
+// showNotification("Adobe APIs ready ✅", "info");
+// showNotification("Something failed!", "error");
 
   function escapeForAttribute(s) {
     return String(s || '')
@@ -698,114 +707,150 @@ async function generateTextRecommendations() {
   }
 
   function renderPodcast(data) {
-    if (!data || !data.audio_url) return;
-    const container = document.createElement('div');
-    container.className = 'card';
-    const title = document.createElement('h3'); title.textContent = 'Podcast';
-    const audio = document.createElement('audio'); audio.controls = true; audio.src = data.audio_url; audio.style.width = '100%';
-    const scriptEl = document.createElement('details');
-    const sum = document.createElement('summary'); sum.textContent = 'Show script';
-    const pre = document.createElement('pre'); pre.style.whiteSpace = 'pre-wrap'; pre.textContent = data.script || '';
-    scriptEl.appendChild(sum); scriptEl.appendChild(pre);
-    container.appendChild(title); container.appendChild(audio); container.appendChild(scriptEl);
-    const side = document.querySelector('.side'); side && side.insertBefore(container, side.firstChild);
-    try { audio.play().catch(()=>{}); } catch {}
+  const side = document.querySelector('.side');
+  // Clear loader if present
+  const loader = document.getElementById("podcast-placeholder");
+  if (loader) loader.remove();
+
+  if (!data || !data.audio_url) return;
+  const container = document.createElement('div');
+  container.className = 'card';
+  container.id = "podcast-card";
+
+  const title = document.createElement('h3'); title.textContent = 'Podcast';
+  const audio = document.createElement('audio'); 
+  audio.controls = true; 
+  audio.src = data.audio_url; 
+  audio.style.width = '100%';
+
+  const scriptEl = document.createElement('details');
+  const sum = document.createElement('summary'); sum.textContent = 'Show script';
+  const pre = document.createElement('pre'); pre.style.whiteSpace = 'pre-wrap'; pre.textContent = data.script || '';
+  scriptEl.appendChild(sum); scriptEl.appendChild(pre);
+
+  container.appendChild(title); 
+  container.appendChild(audio); 
+  container.appendChild(scriptEl);
+
+  side && side.insertBefore(container, side.firstChild);
+
+  try { audio.play().catch(()=>{}); } catch {}
+}
+
+function renderInsights(data) {
+  hideLoading("insights"); // 👈 clear loader
+
+  if (!insightsEl) return;
+  insightsEl.innerHTML = '';
+
+  const groups = [
+    { key: 'key_insights', title: 'Key Insights' },
+    { key: 'did_you_know_facts', title: 'Did you know?' },
+    { key: 'contradictions_or_counterpoints', title: 'Contradictions / Counterpoints' },
+    { key: 'inspirations_or_connections', title: 'Inspirations / Connections' },
+  ];
+
+  groups.forEach(g => {
+    const items = data && Array.isArray(data[g.key]) ? data[g.key] : [];
+    const wrap = document.createElement('div'); wrap.className = 'insight-group';
+    const h = document.createElement('div'); h.className = 'insight-title'; h.textContent = g.title; wrap.appendChild(h);
+    const ul = document.createElement('ul'); ul.className = 'insight-list';
+    items.forEach(t => { const li = document.createElement('li'); li.textContent = String(t); ul.appendChild(li); });
+    if (!items.length) { const li = document.createElement('div'); li.className = 'muted'; li.textContent = 'No items'; wrap.appendChild(li); }
+    else { wrap.appendChild(ul); }
+    insightsEl.appendChild(wrap);
+  });
+}
+
+  //Loading screen for Insights
+  function showLoading(containerId, type = "spinner") {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = ""; // clear old content
+
+  const loader = document.createElement("div");
+  loader.className = "loader";
+
+  if (type === "spinner") {
+    loader.innerHTML = `<div class="spinner"></div>`;
+  } else if (type === "progress") {
+    loader.innerHTML = `
+      <div class="progress-bar">
+        <div class="progress-bar-inner"></div>
+      </div>`;
   }
 
-  function renderInsights(data) {
-    if (!insightsEl) return;
-    insightsEl.innerHTML = '';
-    const groups = [
-      { key: 'key_insights', title: 'Key Insights' },
-      { key: 'did_you_know_facts', title: 'Did you know?' },
-      { key: 'contradictions_or_counterpoints', title: 'Contradictions / Counterpoints' },
-      { key: 'inspirations_or_connections', title: 'Inspirations / Connections' },
-    ];
-    groups.forEach(g => {
-      const items = data && Array.isArray(data[g.key]) ? data[g.key] : [];
-      const wrap = document.createElement('div'); wrap.className = 'insight-group';
-      const h = document.createElement('div'); h.className = 'insight-title'; h.textContent = g.title; wrap.appendChild(h);
-      const ul = document.createElement('ul'); ul.className = 'insight-list';
-      items.forEach(t => { const li = document.createElement('li'); li.textContent = String(t); ul.appendChild(li); });
-      if (!items.length) { const li = document.createElement('div'); li.className = 'muted'; li.textContent = 'No items'; wrap.appendChild(li); }
-      else { wrap.appendChild(ul); }
-      insightsEl.appendChild(wrap);
-    });
-  }
+  container.appendChild(loader);
+}
+
+function hideLoading(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = ""; // clear loader, ready for new content
+}
   
-  async function generateSelectionInsights() {
-  try {
-    if (!res || !res.file_url) { 
-      showNotification('No document context', 'warning'); 
-      return; 
-    }
-    if (!selectedText || !selectedText.trim()) {
-      showNotification('No text selected', 'warning');
-      return;
-    }
 
-    showNotification('Generating insights from selection...', 'info');
+
+
+async function generateInsightsForSelectedText() {
+  if (!selectedText) { showNotification('No text selected for insights', 'warning'); return; }
+  try {
+    showLoading("insights", "spinner"); // 👈 loader in Insights card
 
     const filename = (res.file_url.split('/').pop()) || '';
     const form = new FormData();
     form.append('filename', filename);
-    form.append('text', selectedText.trim());
-    form.append('persona', '');          // explicitly empty
-    form.append('job_to_be_done', '');   // explicitly empty
+    form.append('text', selectedText);
+    if (res && res.metadata) {
+      form.append('persona', res.metadata.persona || '');
+      form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+    }
 
     const r = await fetch('/api/insights', { method: 'POST', body: form });
-    if (!r.ok) throw new Error('Failed');
+    if (!r.ok) throw new Error(await r.text());
     const data = await r.json();
 
     renderInsights(data);
-    showNotification('Selection insights ready ✅', 'success');
+    showNotification('Insights ready for selected text', 'success');
   } catch (e) {
     console.error(e);
-    showNotification('Failed to generate insights ❌', 'error');
+    hideLoading("insights");
+    showNotification('Failed to generate insights', 'error');
+  }
+}
+
+async function generatePodcastForSelectedText() {
+  if (!selectedText) { showNotification('No text selected for podcast', 'warning'); return; }
+  try {
+    // Add loader at top of sidebar where podcast goes
+    showLoading("podcast-placeholder", "progress");
+
+    const filename = (res.file_url.split('/').pop()) || '';
+    const form = new FormData();
+    form.append('filename', filename);
+    form.append('text', selectedText);
+    if (res && res.metadata) {
+      form.append('persona', res.metadata.persona || '');
+      form.append('job_to_be_done', res.metadata.job_to_be_done || '');
+    }
+
+    const r = await fetch('/api/podcast', { method: 'POST', body: form });
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+
+    if (data && data.insights) renderInsights(data.insights);
+    renderPodcast(data);
+
+    showNotification('Podcast ready for selected text', 'success');
+  } catch (e) {
+    console.error(e);
+    hideLoading("podcast-placeholder");
+    showNotification('Failed to create podcast', 'error');
   }
 }
 
 
-  async function generateInsightsForSelectedText() {
-    if (!selectedText) { showNotification('No text selected for insights', 'warning'); return; }
-    try {
-      showNotification('Generating insights for selected text...', 'info');
-      const filename = (res.file_url.split('/').pop()) || '';
-      const form = new FormData();
-      form.append('filename', filename);
-      form.append('text', selectedText);
-      if (res && res.metadata) {
-        form.append('persona', res.metadata.persona || '');
-        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
-      }
-      const r = await fetch('/api/insights', { method: 'POST', body: form });
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
-      renderInsights(data);
-      showNotification('Insights ready for selected text', 'success');
-    } catch (e) { console.error(e); showNotification('Failed to generate insights', 'error'); }
-  }
-
-  async function generatePodcastForSelectedText() {
-    if (!selectedText) { showNotification('No text selected for podcast', 'warning'); return; }
-    try {
-      showNotification('Creating podcast for selected text...', 'info');
-      const filename = (res.file_url.split('/').pop()) || '';
-      const form = new FormData();
-      form.append('filename', filename);
-      form.append('text', selectedText);
-      if (res && res.metadata) {
-        form.append('persona', res.metadata.persona || '');
-        form.append('job_to_be_done', res.metadata.job_to_be_done || '');
-      }
-      const r = await fetch('/api/podcast', { method: 'POST', body: form });
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
-      if (data && data.insights) renderInsights(data.insights);
-      renderPodcast(data);
-      showNotification('Podcast ready for selected text', 'success');
-    } catch (e) { console.error(e); showNotification('Failed to create podcast', 'error'); }
-  }
 
   function manualInputText() {
     const t = prompt('Enter the text you want to analyze:');
