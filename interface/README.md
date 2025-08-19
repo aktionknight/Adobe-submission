@@ -1,6 +1,8 @@
 ## Interface (Local)
+IMP : if gemini 2.5 flash doesnt work, revert to 1.5 flash instead,
 
 Run a local web app that uses 1B logic and Adobe PDF Embed.
+
 
 Prerequisites:
 - Python 3.9+ installed and on PATH
@@ -8,6 +10,7 @@ Prerequisites:
 - Install interface dependencies: `pip install -r interface/requirements.txt`
 - Get an Adobe PDF Embed API Client ID from the Adobe developer portal
 
+/manual run down
 Setup:
 1. **Quick setup** (recommended): Run the setup script:
    ```bash
@@ -31,7 +34,7 @@ python interface/backend/app.py
 ```
 
 Open the app:
-- Navigate to `http://127.0.0.1:8000/`
+- Navigate to `http://127.0.0.1:8080/app`
 - Upload PDFs, choose one to open, then click Analyze
 
 Notes:

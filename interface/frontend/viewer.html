@@ -10,9 +10,12 @@
 </head>
 <body>
   <header>
-    <div>Adobe Acrobat.Ai • Pdf Assistant</div>
+    <div class="viewer-header">
+    <img src="assets/Adobe_Acrobat_DC_logo_2020.svg" alt="Adobe Acrobat Logo" class="adobe-icon" />
+    <div>Adobe Acrobat.Ai</div>
     <div>
       <a href="/app/" class="link-back">← Back</a>
+    </div>
     </div>
   </header>
 
@@ -27,7 +30,7 @@
         </div>
       </div>
       <div class="pdf-tools">
-        <button class="btn-icon" id="btn-insights" title="Generate insights">💡</button>
+        
         
       </div>
     </div>
@@ -59,9 +62,9 @@
 </div>
 
       <div class="card">
-        <h3>Persona & Job Recommendations</h3>
+        
         <div class="card-header">
-          
+          <h3>Persona & Job Recommendations</h3>
           <button class="btn-clear" onclick="generatePersonaRecommendations()" title="Generate recommendations" id = "personaBtn" disabled>💡</button>
         </div>
         <div id="persona-recommendations" class="list"></div>
@@ -889,7 +892,7 @@ async function generatePodcastForSelectedText() {
   }, 1500);
 
   // Insight/Podcast toolbar
-  document.getElementById('btn-insights').onclick = () => generateInsights();
+  ////document.getElementById('btn-insights').onclick = () => generateInsights();
   document.getElementById('btn-mic').onclick = () => generatePodcast();
 
   // Global click: clear selection when clicking outside controls

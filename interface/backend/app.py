@@ -476,6 +476,8 @@ def _ensure_cached(pdf_path: str) -> Dict[str, Any]:
     analysis_cache.set(pdf_path, cached)
     return cached
 
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
 @app.post("/api/insights")
 async def insights(
     filename: str = Form(...),
@@ -585,8 +587,8 @@ async def insights(
         system_instructions = (
             "You are an analytical assistant. Given selected text and document excerpts, "
             "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-            "You MUST provide at least 2 meaningful, non-empty items for each array, even if you need to infer, generalize, or speculate based on context. "
-            "Never leave any array empty. "
+            "Please provide 2–6 items per list if possible."
+            "If not enough relevant info, provide your best attempt with shorter inferences."
             "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
             "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
             "For each claim, suggest an alternate interpretation or scenario where it may not be true."
@@ -613,7 +615,7 @@ async def insights(
         )
 
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name=GEMINI_MODEL,
             system_instruction=system_instructions,
             generation_config={
                 "response_mime_type": "application/json",
@@ -624,7 +626,36 @@ async def insights(
 
         response = model.generate_content(prompt)
 
-        text = getattr(response, "text", None) or (response.candidates[0].content.parts[0].text if getattr(response, "candidates", None) else "")
+        text = None
+        if hasattr(response, "text") and response.text:
+            text = response.text
+        elif getattr(response, "candidates", None):
+            for c in response.candidates:
+                if c.content and c.content.parts:
+                    for p in c.content.parts:
+                        if hasattr(p, "text") and p.text:
+                            text = p.text
+                            break
+                if text:
+                    break
+
+        # If blocked, Gemini returns no candidates or empty text
+        if not text:
+            # Check for safety ratings if available
+            safety = getattr(response, "candidates", None)
+            if safety and hasattr(safety[0], "safety_ratings"):
+                ratings = safety[0].safety_ratings
+                reasons = [r.category for r in ratings if getattr(r, "blocked", False)]
+                reason_str = ", ".join(reasons) if reasons else "unknown"
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Gemini blocked the response for safety reasons: {reason_str}"
+                )
+            # Generic fallback
+            raise HTTPException(
+                status_code=500,
+                detail="Gemini did not return any content. The response may have been blocked for safety reasons."
+            )
         data = _safe_json_parse(text or "")
         # ensure keys
         for k in [
@@ -896,6 +927,7 @@ def azure_tts_speak(text: str, voice: str, tmp_file: str):
 
 from pydub import AudioSegment
 import ffmpeg
+
 @app.post("/api/podcast")
 async def podcast(
     filename: str = Form(...),
@@ -987,7 +1019,7 @@ async def podcast(
         genai.configure(api_key=api_key)
         # Ask for JSON insights first (same prompt as /api/insights)
         insights_model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name=GEMINI_MODEL,
             generation_config={"response_mime_type": "application/json", "temperature": 0.3},
         )
         
@@ -1009,14 +1041,23 @@ async def podcast(
         if connections_context:
             insights_prompt += "Cross-doc Notes:\n" + "\n\n".join(connections_context[:10]) + "\n\n"
         insights_response = insights_model.generate_content(insights_prompt)
-        insights_text = getattr(insights_response, "text", None) or (
-            insights_response.candidates[0].content.parts[0].text if getattr(insights_response, "candidates", None) else ""
-        )
+        insights_text = None
+        if getattr(insights_response, "text", None):
+            insights_text = insights_response.text
+        elif getattr(insights_response, "candidates", None):
+            for c in insights_response.candidates:
+                if c.content and c.content.parts:
+                    for p in c.content.parts:
+                        if getattr(p, "text", None):
+                            insights_text = p.text
+                            break
+                if insights_text:
+                    break
         insights_data = _safe_json_parse(insights_text or "")
 
         # Step 2: serialize into podcast script prompt and ask Gemini to humanize
         script_model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name=GEMINI_MODEL,
             generation_config={"temperature": 0.7, "max_output_tokens": 2048},
         )
         
@@ -1261,6 +1302,15 @@ def clear_all_podcasts() -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear podcasts: {str(e)}")
 
+
+# --- Delete all podcast audio files from VO folder on startup ---
+def clear_vo_folder_on_startup():
+    import shutil
+    if os.path.exists(UPLOADS_VO_DIR):
+        shutil.rmtree(UPLOADS_VO_DIR)
+    os.makedirs(UPLOADS_VO_DIR, exist_ok=True)
+
+clear_vo_folder_on_startup()
 
 if __name__ == "__main__":
     import uvicorn
