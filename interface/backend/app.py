@@ -486,9 +486,9 @@ async def insights(
     job_to_be_done: str = Form(""),
     text: str = Form(""),  # New parameter for selected text
 ):
-    api_key = os.getenv("GEMINI_API", "").strip()
+    api_key = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     if not api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API env var not set")
+        raise HTTPException(status_code=500, detail="GOOGLE_APPLICATION_CREDENTIALS env var not set")
     pdf_path = os.path.join(UPLOADS_DIR, os.path.basename(filename))
     if not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="File not found. Upload first.")
@@ -943,9 +943,9 @@ async def podcast(
     job_to_be_done: str = Form(""),
     text: str = Form(""),
 ):
-    api_key = os.getenv("GEMINI_API", "").strip()
+    api_key = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     if not api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API env var not set")
+        raise HTTPException(status_code=500, detail="GOOGLE_APPLICATION_CREDENTIALS env var not set")
 
     pdf_path = os.path.join(UPLOADS_DIR, os.path.basename(filename))
     if not os.path.exists(pdf_path):
