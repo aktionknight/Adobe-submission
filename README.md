@@ -1,10 +1,25 @@
 ## Interface (Local)
+
+
 IMP : if gemini 2.5 flash doesnt work, revert to 1.5 flash instead,
 IMP : using azure TTS
 IMP : Adobe api provided in doc attached along with this
+(Docker server requests may be slow depending on hardware, local tests were returning 10-15 sec wait time for analysis)
+(wait for around 30 sec - 45 sec for podcast generation, didnt get time to implement the loading bar for it)
+
+FEATURES : 
+CORE - 
+   Multi PDF handling
+   Select and analyse (press button after selection)
+   Jump To location with a click
+ADD ONS -
+   Insight generation
+   Multi voice Podcast Generation
+BONUS FEATURES -
+   Add a persona and a query to Get relevant sections (Optional)
 
 
-Run a local web app that uses 1B logic and Adobe PDF Embed.
+Run a local web app that uses 1A-1B logic and Adobe PDF Embed.
 
 
 Prerequisites:
