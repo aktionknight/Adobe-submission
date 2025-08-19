@@ -1,5 +1,8 @@
 ## Interface (Local)
 IMP : if gemini 2.5 flash doesnt work, revert to 1.5 flash instead,
+IMP : using azure TTS
+IMP : Adobe api provided in doc attached along with this
+
 
 Run a local web app that uses 1B logic and Adobe PDF Embed.
 

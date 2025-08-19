@@ -37,6 +37,7 @@ try:
 except Exception:
     gTTS = None  # type: ignore
 import time
+from pathlib import Path
 
 app = FastAPI(title="Adobe 1B Interface API", version="0.1.0")
 
@@ -897,7 +898,7 @@ import requests
 # Azure keys
 AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "").strip()
 AZURE_REGION = os.getenv("AZURE_TTS_REGION", "").strip()
-AZURE_TTS_ENDPOINT = f"https://southeastasia.tts.speech.microsoft.com/cognitiveservices/v1"
+AZURE_TTS_ENDPOINT = f"https://{AZURE_REGION or 'southeastasia'}.tts.speech.microsoft.com/cognitiveservices/v1"
 
 # Two different Azure voices
 VOICE_A = "en-US-JennyNeural"  # Host A
@@ -927,6 +928,13 @@ def azure_tts_speak(text: str, voice: str, tmp_file: str):
 
 from pydub import AudioSegment
 import ffmpeg
+try:
+    from .tts import generate_audio  # type: ignore
+except Exception:
+    try:
+        from backend.tts import generate_audio  # type: ignore
+    except Exception:
+        generate_audio = None  # type: ignore
 
 @app.post("/api/podcast")
 async def podcast(
@@ -1090,50 +1098,52 @@ async def podcast(
         if not script_text:
             raise HTTPException(status_code=500, detail="Failed to generate podcast script")
 
-        # Step 3: Multi-voice Azure TTS
-        if not AZURE_TTS_KEY or not AZURE_REGION:
-            raise HTTPException(status_code=500, detail="Azure TTS not configured")
-
+        # Step 3: TTS (supports azure/openai/local via TTS_PROVIDER)
         ts = int(time.time())
         base = os.path.splitext(os.path.basename(filename))[0]
         out_name = f"{base}_{ts}.mp3"
         out_path = os.path.join(UPLOADS_VO_DIR, out_name)
 
-        # Parse lines into speakers
-        lines: List[Tuple[str, str]] = []
-        for raw in script_text.splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith("HOST_A:"):
-                lines.append(("A", line[len("HOST_A:"):].strip()))
-            elif line.startswith("HOST_B:"):
-                lines.append(("B", line[len("HOST_B:"):].strip()))
+        # Prefer multi-voice if provider=azure and two voices provided; otherwise synthesize full script
+        provider = (os.getenv("TTS_PROVIDER", "local").strip().lower())
+        try:
+            if provider == "azure":
+                # Try alternating voices when script is formatted with HOST_A / HOST_B
+                lines: List[Tuple[str, str]] = []
+                for raw in script_text.splitlines():
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    if line.startswith("HOST_A:"):
+                        lines.append((os.getenv("AZURE_TTS_VOICE_A", VOICE_A), line[len("HOST_A:"):].strip()))
+                    elif line.startswith("HOST_B:"):
+                        lines.append((os.getenv("AZURE_TTS_VOICE_B", VOICE_B), line[len("HOST_B:"):].strip()))
+                    else:
+                        lines.append((os.getenv("AZURE_TTS_VOICE_A", VOICE_A), line))
+
+                if lines:
+                    tmp_files = []
+                    for i, (vname, seg_text) in enumerate(lines):
+                        tmp_file = os.path.join(UPLOADS_VO_DIR, f"tmp_{ts}_{i}.mp3")
+                        azure_tts_speak(seg_text, vname, tmp_file)
+                        tmp_files.append(tmp_file)
+                    combined = AudioSegment.silent(duration=250)
+                    for f in tmp_files:
+                        seg = AudioSegment.from_file(f, format="mp3")
+                        combined += seg + AudioSegment.silent(duration=300)
+                    combined.export(out_path, format="mp3")
+                    for f in tmp_files:
+                        try:
+                            os.remove(f)
+                        except Exception:
+                            pass
+                else:
+                    generate_audio(script_text, out_path, provider="azure")
             else:
-                lines.append(("A", line))  # fallback
-
-        # --- Generate temp audio files ---
-        tmp_files = []
-        for i, (speaker, seg_text) in enumerate(lines):
-            tmp_file = os.path.join(UPLOADS_VO_DIR, f"tmp_{ts}_{i}.mp3")
-            voice = VOICE_A if speaker == "A" else VOICE_B
-            azure_tts_speak(seg_text, voice, tmp_file)   # Save each line as MP3
-            tmp_files.append(tmp_file)
-
-        # --- Merge with pydub ---
-        combined = AudioSegment.silent(duration=300)  # small intro pause
-        for f in tmp_files:
-            seg = AudioSegment.from_file(f, format="mp3")
-            combined += seg + AudioSegment.silent(duration=400)  # pause between speakers
-
-        combined.export(out_path, format="mp3")
-
-        # --- Cleanup temp files ---
-        for f in tmp_files:
-            try:
-                os.remove(f)
-            except:
-                pass
+                # Single-voice synthesis for openai/local
+                generate_audio(script_text, out_path, provider=provider)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
         return {
             "audio_url": f"/uploads/VO/{out_name}",
