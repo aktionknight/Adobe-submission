@@ -588,7 +588,7 @@ async def insights(
         system_instructions = (
             "You are an analytical assistant. Given selected text and document excerpts, "
             "produce JSON with arrays for: key_insights, did_you_know_facts, contradictions_or_counterpoints, inspirations_or_connections. "
-            "Please provide 2–6 items per list if possible."
+            "You Must Provide atleast 2 items for each array, even if you need to infer or generalize."
             "If not enough relevant info, provide your best attempt with shorter inferences."
             "For contradictions_or_counterparts, look for factual inconsistencies, different interpretations, or alternative perspectives, "
             "even if they come from separate documents or sections. If no clear contradictions exist, infer possible counterpoints."
